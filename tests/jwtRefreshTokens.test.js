@@ -51,6 +51,8 @@ function mockRes() {
   const res = {};
   res.status = jest.fn().mockReturnValue(res);
   res.json = jest.fn().mockReturnValue(res);
+  res.cookie = jest.fn().mockReturnValue(res);
+  res.clearCookie = jest.fn().mockReturnValue(res);
   return res;
 }
 
@@ -69,10 +71,14 @@ describe('#595 JWT refresh token flow', () => {
 
       expect(res.status).not.toHaveBeenCalled();
       const [body] = res.json.mock.calls[0];
-      expect(body.token).toBeDefined();
+      // Token is now in the HttpOnly cookie, not the response body
+      expect(body.token).toBeUndefined();
+      expect(body.isAdmin).toBe(true);
       expect(body.refreshToken).toBeDefined();
       expect(typeof body.expiresIn).toBe('number');
       expect(typeof body.refreshExpiresIn).toBe('number');
+      // Cookie must have been set
+      expect(res.cookie).toHaveBeenCalledWith('admin_token', expect.any(String), expect.objectContaining({ httpOnly: true }));
     });
 
     it('access token TTL respects JWT_ACCESS_TOKEN_TTL env var', async () => {

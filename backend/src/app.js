@@ -38,6 +38,7 @@ const { healthCheck } = require('./controllers/healthController');
 const logger = require('./utils/logger');
 
 const morgan = require('morgan');
+const cookieParser = require('cookie-parser');
 const { parseAllowedOrigins } = require('./utils/corsOrigins');
 
 const allowedOrigins = parseAllowedOrigins();
@@ -49,7 +50,9 @@ app.use(cors({
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-School-ID', 'Idempotency-Key'],
+  credentials: true,
 }));
+app.use(cookieParser());
 // The backend serves only JSON API responses — no HTML, scripts, or styles.
 // CSP directives for HTML content (scriptSrc, styleSrc, imgSrc, etc.) are
 // irrelevant here and have been removed. The frontend (Next.js) owns those.

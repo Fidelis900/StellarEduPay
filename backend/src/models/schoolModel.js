@@ -50,6 +50,19 @@ const schoolSchema = new mongoose.Schema(
      * Generate with: crypto.randomBytes(32).toString('hex')
      */
     webhookSecret:  { type: String, default: null },
+    /**
+     * Multiplier threshold for flagging suspicious payments.
+     * Payments deviating from expected fee by more than this multiplier are flagged.
+     * E.g., multiplier=3.0 flags payments >3× or <1/3 of expected fee.
+     * Default: 3.0 (matches original hardcoded behavior).
+     * Min: 1.1 (prevents overly sensitive detection).
+     */
+    suspiciousPaymentMultiplier: {
+      type: Number,
+      default: 3.0,
+      min: [1.1, 'suspiciousPaymentMultiplier must be at least 1.1'],
+      max: [100, 'suspiciousPaymentMultiplier must not exceed 100'],
+    },
   },
   { timestamps: true }
 );

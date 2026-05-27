@@ -28,6 +28,8 @@ async function requireAdminAuth(req, res, next) {
   }
 
   const authHeader = req.headers['authorization'];
+  const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const token = cookieToken || bearerToken;
 
   const handleAuthFailure = async (reason, code) => {
     logger.warn(`Failed admin auth attempt: ${reason} from ${ip}`, { 
@@ -66,8 +68,6 @@ async function requireAdminAuth(req, res, next) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return handleAuthFailure('Authentication required. Provide a Bearer token.', 'MISSING_AUTH_TOKEN');
   }
-
-  const token = authHeader.slice(7); // strip "Bearer "
 
   try {
     const secret = process.env.JWT_SECRET;

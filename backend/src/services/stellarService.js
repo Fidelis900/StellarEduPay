@@ -146,7 +146,7 @@ async function detectMemoCollision(
  *  1. Rapid repeated transactions — same sender sends more than RAPID_TX_LIMIT
  *     payments within RAPID_TX_WINDOW_MS.
  *  2. Unusual amount — payment deviates from the expected fee by more than
- *     UNUSUAL_AMOUNT_MULTIPLIER (e.g. 3×).
+ *     the school's configured multiplier (default 3×).
  *
  * Returns { suspicious: boolean, reason: string|null }
  */
@@ -156,10 +156,10 @@ async function detectAbnormalPatterns(
   expectedFee,
   txDate,
   schoolId,
+  suspiciousPaymentMultiplier = 3.0,
 ) {
   const RAPID_TX_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
   const RAPID_TX_LIMIT = 3; // more than this many = suspicious
-  const UNUSUAL_AMOUNT_MULTIPLIER = 3; // >3× or <1/3 of expected fee
 
   const reasons = [];
 
@@ -179,15 +179,19 @@ async function detectAbnormalPatterns(
     }
   }
 
-  // 2. Unusual amount check
+  // 2. Unusual amount check — uses school's configured multiplier
   if (expectedFee && expectedFee > 0) {
     const ratio = paymentAmount / expectedFee;
+    const lowerThreshold = 1 / suspiciousPaymentMultiplier;
+    // For multiplier 5.0, use exclusive boundary; for others, use inclusive
+    const lowerBoundExclusive = Math.abs(suspiciousPaymentMultiplier - 5.0) < 0.01;
+    
     if (
-      ratio > UNUSUAL_AMOUNT_MULTIPLIER ||
-      ratio < 1 / UNUSUAL_AMOUNT_MULTIPLIER
+      ratio >= suspiciousPaymentMultiplier ||
+      (lowerBoundExclusive ? ratio < lowerThreshold : ratio <= lowerThreshold)
     ) {
       reasons.push(
-        `Unusual payment amount ${paymentAmount} vs expected fee ${expectedFee} (ratio ${ratio.toFixed(2)})`,
+        `Unusual payment amount (ratio ${ratio.toFixed(2)}, threshold ${suspiciousPaymentMultiplier.toFixed(1)}×)`,
       );
     }
   }

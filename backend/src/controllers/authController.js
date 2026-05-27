@@ -125,8 +125,16 @@ async function handleLogin(req, res) {
   // Store refresh token (non-blocking — fire and forget; failure means token won't be usable)
   getStore().set(refreshToken, refreshTTL).catch(() => {});
 
+  res.cookie('admin_token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: accessTTL * 1000,
+    path: '/',
+  });
+
   return res.json({
-    token,
+    isAdmin: true,
     expiresIn: accessTTL,
     refreshToken,
     refreshExpiresIn: refreshTTL,
@@ -171,7 +179,17 @@ async function handleLogout(req, res) {
     await getStore().del(refreshToken);
   }
 
+  res.clearCookie('admin_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/' });
   return res.json({ message: 'Logged out.' });
 }
 
-module.exports = { handleLogin, handleRefresh, handleLogout, _resetStore };
+/**
+ * GET /api/auth/me
+ * Returns { isAdmin: true } when the request carries a valid admin cookie/token.
+ * Used by the frontend to check auth state on page load.
+ */
+function handleMe(req, res) {
+  return res.json({ isAdmin: true });
+}
+
+module.exports = { handleLogin, handleRefresh, handleLogout, handleMe, _resetStore };
