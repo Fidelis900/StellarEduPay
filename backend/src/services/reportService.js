@@ -129,34 +129,66 @@ async function generateReport({ schoolId, startDate, endDate, timezone = 'UTC' }
 }
 
 /**
+ * Escape a single CSV field value.
+ * Wraps the value in double-quotes if it contains a comma, double-quote, or newline.
+ * Internal double-quotes are escaped by doubling them ("" per RFC 4180).
+ *
+ * @param {*} value
+ * @returns {string}
+ */
+function csvEscape(value) {
+  const str = String(value ?? '');
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/**
  * Convert a report object to CSV string.
+ * All user-supplied string fields (school name, class name, etc.) are passed
+ * through csvEscape so that commas, quotes, and newlines do not break parsers.
  */
 function reportToCsv(report) {
   const lines = [];
-  lines.push(`Generated At,${report.generatedAt}`);
-  lines.push(`School ID,${report.schoolId}`);
-  lines.push(`Period Start,${report.period.startDate || 'all time'}`);
-  lines.push(`Period End,${report.period.endDate || 'all time'}`);
+  lines.push(`Generated At,${csvEscape(report.generatedAt)}`);
+  lines.push(`School ID,${csvEscape(report.schoolId)}`);
+  lines.push(`Period Start,${csvEscape(report.period.startDate || 'all time')}`);
+  lines.push(`Period End,${csvEscape(report.period.endDate || 'all time')}`);
   lines.push('');
   lines.push('--- Summary ---');
-  lines.push(`Total Amount,${report.summary.totalAmount}`);
-  lines.push(`Total Payments,${report.summary.paymentCount}`);
-  lines.push(`Valid Payments,${report.summary.validCount}`);
-  lines.push(`Overpaid,${report.summary.overpaidCount}`);
-  lines.push(`Underpaid,${report.summary.underpaidCount}`);
-  lines.push(`Fully Paid Students,${report.summary.fullyPaidStudentCount}`);
+  lines.push(`Total Amount,${csvEscape(report.summary.totalAmount)}`);
+  lines.push(`Total Payments,${csvEscape(report.summary.paymentCount)}`);
+  lines.push(`Valid Payments,${csvEscape(report.summary.validCount)}`);
+  lines.push(`Overpaid,${csvEscape(report.summary.overpaidCount)}`);
+  lines.push(`Underpaid,${csvEscape(report.summary.underpaidCount)}`);
+  lines.push(`Fully Paid Students,${csvEscape(report.summary.fullyPaidStudentCount)}`);
   lines.push('');
   lines.push('--- Daily Breakdown ---');
   lines.push('Date,Total Amount,Payment Count,Valid,Overpaid,Underpaid,Unique Students');
   for (const row of report.byDate) {
-    lines.push([row.date, row.totalAmount, row.paymentCount, row.validCount, row.overpaidCount, row.underpaidCount, row.uniqueStudentCount].join(','));
+    lines.push([
+      csvEscape(row.date),
+      csvEscape(row.totalAmount),
+      csvEscape(row.paymentCount),
+      csvEscape(row.validCount),
+      csvEscape(row.overpaidCount),
+      csvEscape(row.underpaidCount),
+      csvEscape(row.uniqueStudentCount),
+    ].join(','));
   }
   if (report.byClass && report.byClass.length > 0) {
     lines.push('');
     lines.push('--- Class Breakdown ---');
     lines.push('Class,Total Collected,Payment Count,Paid Students,Unpaid Students');
     for (const row of report.byClass) {
-      lines.push([row.className, row.totalCollected, row.paymentCount, row.paidCount, row.unpaidCount].join(','));
+      lines.push([
+        csvEscape(row.className),
+        csvEscape(row.totalCollected),
+        csvEscape(row.paymentCount),
+        csvEscape(row.paidCount),
+        csvEscape(row.unpaidCount),
+      ].join(','));
     }
   }
   return lines.join('\n');

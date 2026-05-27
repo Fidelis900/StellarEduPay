@@ -347,6 +347,25 @@ async function verifyPayment(req, res, next) {
     const { schoolId } = req;
     const { txHash } = req.body;
 
+    // Validate txHash presence before any further processing.
+    // validateTransactionHash(undefined) produces a confusing error;
+    // this guard returns a clear 400 with VALIDATION_ERROR instead.
+    if (!txHash) {
+      await logAudit({
+        schoolId,
+        action: 'payment_verify',
+        performedBy: req.user?.email || req.user?.id || 'anonymous',
+        targetId: `missing-tx:${schoolId}`,
+        targetType: 'payment',
+        details: { error: 'txHash is required', receivedKeys: Object.keys(req.body || {}) },
+        result: 'failure',
+        errorMessage: 'txHash is required',
+        ipAddress,
+        userAgent,
+      });
+      return res.status(400).json({ error: 'txHash is required', code: 'VALIDATION_ERROR' });
+    }
+
     const hashValidation = validateTransactionHash(txHash);
     if (!hashValidation.valid) {
       // Log failed validation attempt

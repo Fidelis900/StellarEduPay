@@ -72,7 +72,13 @@ paymentSchema.index({ schoolId: 1, studentId: 1, confirmedAt: -1 });
 paymentSchema.index({ schoolId: 1, feeValidationStatus: 1 });
 paymentSchema.index({ schoolId: 1, isSuspicious: 1 });
 paymentSchema.index({ schoolId: 1, confirmationStatus: 1 });
-paymentSchema.index({ schoolId: 1, status: 1, confirmedAt: -1 });
+// Partial compound index for report queries: filters out orphaned/deleted
+// payments so MongoDB only indexes documents that appear in aggregation
+// results, keeping the index lean and report queries fast.
+paymentSchema.index(
+  { schoolId: 1, status: 1, confirmedAt: -1 },
+  { partialFilterExpression: { studentDeleted: { $ne: true }, deletedAt: null } }
+);
 paymentSchema.index({ schoolId: 1, studentId: 1, feeCategory: 1 });
 
 paymentSchema.virtual('explorerUrl').get(function () {
