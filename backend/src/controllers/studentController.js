@@ -14,7 +14,7 @@ async function registerStudent(req, res, next) {
 
     if (!studentId) {
       const { generateStudentId } = require('../utils/generateStudentId');
-      studentId = await generateStudentId();
+      studentId = await generateStudentId(5, schoolId);
     }
 
     const existingStudent = await Student.findOne({ schoolId, studentId });

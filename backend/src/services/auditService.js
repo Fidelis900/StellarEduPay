@@ -67,6 +67,7 @@ async function getAuditLogs(filters = {}) {
     action,
     targetType,
     performedBy,
+    result,
     startDate,
     endDate,
     page = 1,
@@ -78,6 +79,7 @@ async function getAuditLogs(filters = {}) {
   if (action) query.action = action;
   if (targetType) query.targetType = targetType;
   if (performedBy) query.performedBy = performedBy;
+  if (result) query.result = result;
 
   if (startDate || endDate) {
     query.createdAt = {};
@@ -85,8 +87,8 @@ async function getAuditLogs(filters = {}) {
     if (endDate) query.createdAt.$lte = new Date(endDate);
   }
 
-  const skip = (page - 1) * Math.min(limit, 200);
   const actualLimit = Math.min(limit, 200);
+  const skip = (page - 1) * actualLimit;
 
   const [logs, total] = await Promise.all([
     AuditLog.find(query)
@@ -101,7 +103,8 @@ async function getAuditLogs(filters = {}) {
     logs,
     total,
     page,
-    pages: Math.ceil(total / actualLimit),
+    limit: actualLimit,
+    pages: Math.ceil(total / actualLimit) || 1,
   };
 }
 

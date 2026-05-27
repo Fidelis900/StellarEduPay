@@ -17,8 +17,16 @@ api.interceptors.response.use(
   }
 );
 
-export const getStudents = (page = 1, limit = 50) =>
-  api.get("/students", { params: { page, limit } });
+export const getStudents = (page = 1, limit = 20, { search, status, className } = {}) =>
+  api.get("/students", {
+    params: {
+      page,
+      limit,
+      ...(search    && { search }),
+      ...(status    && status !== "all" && { status }),
+      ...(className && { class: className }),
+    },
+  });
 export const registerStudent = (data) => api.post("/students", data);
 export const getPaymentSummary = () => api.get("/payments/summary");
 export const getPaymentInstructions = (studentId) => api.get(`/payments/instructions/${studentId}`);

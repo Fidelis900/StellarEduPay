@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import SyncButton from "../components/SyncButton";
 import ErrorBoundary from "../components/ErrorBoundary";
 import { getSyncStatus, getPaymentSummary, getStudents } from "../services/api";
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 
 function timeAgo(iso) {
   if (!iso) return "Never";
@@ -32,9 +32,21 @@ export default function Dashboard() {
   const [studentsError, setStudentsError]   = useState(null);
   const [page, setPage]                 = useState(1);
   const [pages, setPages]               = useState(1);
+  const [total, setTotal]               = useState(0);
   const [search, setSearch]             = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [classFilter, setClassFilter]   = useState("");
   const [error, setError]               = useState(null);
+
+  // Debounce search input so we don't fire a request on every keystroke.
+  const searchDebounceRef = useRef(null);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  useEffect(() => {
+    clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(searchDebounceRef.current);
+  }, [search]);
 
   const fetchSummary = useCallback(() => {
     setSummaryLoading(true);
@@ -45,13 +57,14 @@ export default function Dashboard() {
       .finally(() => setSummaryLoading(false));
   }, []);
 
-  const fetchStudents = useCallback((p) => {
+  const fetchStudents = useCallback((p, srch, st, cls) => {
     setStudentsLoading(true);
     setStudentsError(null);
-    getStudents(p, PAGE_SIZE)
+    getStudents(p, PAGE_SIZE, { search: srch, status: st, className: cls })
       .then(({ data }) => {
         setStudents(data.students);
         setPages(data.pages || 1);
+        setTotal(data.total || 0);
       })
       .catch(() => setStudentsError("Could not load student list."))
       .finally(() => setStudentsLoading(false));
@@ -64,14 +77,24 @@ export default function Dashboard() {
     fetchSummary();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { fetchStudents(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Reset to page 1 whenever any filter changes, then fetch.
+  useEffect(() => {
+    setPage(1);
+    fetchStudents(1, debouncedSearch, statusFilter, classFilter);
+  }, [debouncedSearch, statusFilter, classFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch when page changes (filter-change above already resets to p=1).
+  useEffect(() => {
+    fetchStudents(page, debouncedSearch, statusFilter, classFilter);
+  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSyncComplete(data) {
     setLastSyncAt(new Date().toISOString());
     setSyncMsg(data?.message || "Sync complete.");
     setTimeout(() => setSyncMsg(null), 3000);
     fetchSummary();
-    fetchStudents(1);
+    setPage(1);
+    fetchStudents(1, debouncedSearch, statusFilter, classFilter);
   }
 
   const stats = [
@@ -81,12 +104,9 @@ export default function Dashboard() {
     { label: "XLM Collected",    value: summary ? `${(summary.totalXlmCollected || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—", sub: "XLM", accent: "#1d4ed8" },
   ];
 
-  const filtered = students.filter(s => {
-    const q = search.toLowerCase();
-    const matchQ = !q || s.name?.toLowerCase().includes(q) || s.studentId?.toLowerCase().includes(q);
-    const matchS = statusFilter === "all" || (s.status || "unpaid").toLowerCase() === statusFilter;
-    return matchQ && matchS;
-  });
+  // Page-range display, e.g. "Showing 21–40 of 347 students"
+  const rangeStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd   = Math.min(page * PAGE_SIZE, total);
 
   return (
     <>
@@ -113,6 +133,8 @@ export default function Dashboard() {
         .skeleton { height: 1.4rem; width: 55%; background: var(--border); border-radius: 4px; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         .table-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+        .pagination-bar { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-top: 1rem; font-size: 0.85rem; flex-wrap: wrap; }
+        .pagination-controls { display: flex; align-items: center; gap: 0.5rem; }
       `}</style>
 
       <div className="dash-wrap">
@@ -129,12 +151,12 @@ export default function Dashboard() {
 
         {/* Alerts */}
         {syncMsg && (
-          <div style={{ background: "#dcfce7", border: "1px solid #bbf7d0", borderRadius: 8, padding: "0.65rem 1rem", color: "#166534", fontSize: "0.875rem", margin: "1rem 0" }}>
+          <div role="status" style={{ background: "#dcfce7", border: "1px solid #bbf7d0", borderRadius: 8, padding: "0.65rem 1rem", color: "#166534", fontSize: "0.875rem", margin: "1rem 0" }}>
             ✓ {syncMsg}
           </div>
         )}
         {error && (
-          <div style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "0.65rem 1rem", color: "#991b1b", fontSize: "0.875rem", margin: "1rem 0" }}>
+          <div role="alert" style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "0.65rem 1rem", color: "#991b1b", fontSize: "0.875rem", margin: "1rem 0" }}>
             {error}
           </div>
         )}
@@ -142,7 +164,7 @@ export default function Dashboard() {
         {/* Stats */}
         <ErrorBoundary>
           {summaryError ? (
-            <div style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "0.65rem 1rem", color: "#991b1b", fontSize: "0.875rem", margin: "1rem 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div role="alert" style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "0.65rem 1rem", color: "#991b1b", fontSize: "0.875rem", margin: "1rem 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               {summaryError}
               <button onClick={fetchSummary} style={{ marginLeft: "1rem", padding: "0.25rem 0.75rem", borderRadius: 6, border: "1px solid #fecaca", background: "transparent", color: "#991b1b", cursor: "pointer", fontSize: "0.8rem" }}>Retry</button>
             </div>
@@ -163,30 +185,54 @@ export default function Dashboard() {
           )}
         </ErrorBoundary>
 
-        {/* Toolbar */}
-        <div className="toolbar">
+        {/* Toolbar — search + filters (server-side) */}
+        <div className="toolbar" role="search" aria-label="Filter students">
           <input
+            type="search"
             placeholder="Search by name or ID…"
             value={search}
             onChange={e => setSearch(e.target.value)}
+            aria-label="Search students by name or ID"
           />
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+            aria-label="Filter by payment status"
+          >
             <option value="all">All Status</option>
             <option value="paid">Paid</option>
             <option value="partial">Partial</option>
             <option value="unpaid">Unpaid</option>
+          </select>
+          <select
+            value={classFilter}
+            onChange={e => setClassFilter(e.target.value)}
+            aria-label="Filter by class"
+          >
+            <option value="">All Classes</option>
+            <option value="JSS1">JSS1</option>
+            <option value="JSS2">JSS2</option>
+            <option value="JSS3">JSS3</option>
+            <option value="SS1">SS1</option>
+            <option value="SS2">SS2</option>
+            <option value="SS3">SS3</option>
           </select>
         </div>
 
         {/* Table */}
         <ErrorBoundary>
           {studentsError ? (
-            <div style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "0.65rem 1rem", color: "#991b1b", fontSize: "0.875rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div role="alert" style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "0.65rem 1rem", color: "#991b1b", fontSize: "0.875rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               {studentsError}
-              <button onClick={() => fetchStudents(page)} style={{ marginLeft: "1rem", padding: "0.25rem 0.75rem", borderRadius: 6, border: "1px solid #fecaca", background: "transparent", color: "#991b1b", cursor: "pointer", fontSize: "0.8rem" }}>Retry</button>
+              <button
+                onClick={() => fetchStudents(page, debouncedSearch, statusFilter, classFilter)}
+                style={{ marginLeft: "1rem", padding: "0.25rem 0.75rem", borderRadius: 6, border: "1px solid #fecaca", background: "transparent", color: "#991b1b", cursor: "pointer", fontSize: "0.8rem" }}
+              >
+                Retry
+              </button>
             </div>
           ) : (
-            <div className="table-wrap" aria-busy={studentsLoading}>
+            <div className="table-wrap" aria-busy={studentsLoading} aria-label="Student list">
               {studentsLoading ? (
                 <table className="dash-table" aria-label="Loading students">
                   <thead>
@@ -210,17 +256,21 @@ export default function Dashboard() {
                 <table className="dash-table">
                   <thead>
                     <tr>
-                      <th>Student ID</th>
-                      <th>Name</th>
-                      <th>Class</th>
-                      <th>Fee</th>
-                      <th>Status</th>
+                      <th scope="col">Student ID</th>
+                      <th scope="col">Name</th>
+                      <th scope="col">Class</th>
+                      <th scope="col">Fee</th>
+                      <th scope="col">Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.length === 0 ? (
-                      <tr><td colSpan="5" style={{ textAlign: "center", padding: "2.5rem", color: "var(--muted)" }}>No students found.</td></tr>
-                    ) : filtered.map(s => {
+                    {students.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" style={{ textAlign: "center", padding: "2.5rem", color: "var(--muted)" }}>
+                          No students found.
+                        </td>
+                      </tr>
+                    ) : students.map(s => {
                       const st = (s.status || "unpaid").toLowerCase();
                       const badge = STATUS_COLOR[st] || STATUS_COLOR.unpaid;
                       return (
@@ -242,12 +292,38 @@ export default function Dashboard() {
           )}
         </ErrorBoundary>
 
-        {/* Pagination */}
-        {pages > 1 && (
-          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "0.5rem", marginTop: "1rem", fontSize: "0.85rem" }}>
-            <button className="page-btn" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-            <span style={{ color: "var(--muted)" }}>Page {page} of {pages}</span>
-            <button className="page-btn" disabled={page === pages} onClick={() => setPage(p => p + 1)}>Next →</button>
+        {/* Pagination — always visible when there are students */}
+        {total > 0 && (
+          <div className="pagination-bar">
+            {/* Page-range summary */}
+            <span style={{ color: "var(--muted)" }} aria-live="polite" aria-atomic="true">
+              {studentsLoading
+                ? "Loading…"
+                : `Showing ${rangeStart}–${rangeEnd} of ${total.toLocaleString()} students`}
+            </span>
+
+            {/* Previous / Next controls */}
+            <nav className="pagination-controls" aria-label="Student list pagination">
+              <button
+                className="page-btn"
+                disabled={page === 1 || studentsLoading}
+                onClick={() => setPage(p => p - 1)}
+                aria-label="Go to previous page"
+              >
+                ← Prev
+              </button>
+              <span style={{ color: "var(--muted)" }} aria-current="page">
+                Page {page} of {pages}
+              </span>
+              <button
+                className="page-btn"
+                disabled={page === pages || studentsLoading}
+                onClick={() => setPage(p => p + 1)}
+                aria-label="Go to next page"
+              >
+                Next →
+              </button>
+            </nav>
           </div>
         )}
       </div>

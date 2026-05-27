@@ -36,6 +36,7 @@ export default function AuditLogsPage() {
   // Filters
   const [actionFilter, setActionFilter] = useState("");
   const [targetTypeFilter, setTargetTypeFilter] = useState("");
+  const [resultFilter, setResultFilter] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
@@ -46,6 +47,7 @@ export default function AuditLogsPage() {
     const params = { page: p, limit: 50 };
     if (actionFilter) params.action = actionFilter;
     if (targetTypeFilter) params.targetType = targetTypeFilter;
+    if (resultFilter) params.result = resultFilter;
     if (startDate) params.startDate = startDate;
     if (endDate) params.endDate = endDate;
 
@@ -65,7 +67,7 @@ export default function AuditLogsPage() {
 
   useEffect(() => {
     fetchLogs(1);
-  }, [actionFilter, targetTypeFilter, startDate, endDate]);
+  }, [actionFilter, targetTypeFilter, resultFilter, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={containerStyle}>
@@ -108,6 +110,20 @@ export default function AuditLogsPage() {
             <option value="payment">Payment</option>
             <option value="fee">Fee</option>
             <option value="school">School</option>
+          </select>
+        </div>
+
+        <div style={filterGroupStyle}>
+          <label style={labelStyle}>Result</label>
+          <select
+            value={resultFilter}
+            onChange={(e) => setResultFilter(e.target.value)}
+            style={selectStyle}
+            aria-label="Filter by result"
+          >
+            <option value="">All Results</option>
+            <option value="success">Success</option>
+            <option value="failure">Failure</option>
           </select>
         </div>
 
@@ -198,10 +214,11 @@ export default function AuditLogsPage() {
           </div>
 
           {/* Pagination */}
-          <div style={paginationStyle}>
+          <div style={paginationStyle} role="navigation" aria-label="Audit log pagination">
             <button
               onClick={() => fetchLogs(page - 1)}
               disabled={page === 1}
+              aria-label="Previous page"
               style={{
                 ...pageBtnStyle,
                 opacity: page === 1 ? 0.5 : 1,
@@ -210,12 +227,13 @@ export default function AuditLogsPage() {
             >
               Previous
             </button>
-            <span style={{ fontSize: "0.9rem", color: "#666" }}>
-              Page {page} of {pages} ({total} total)
+            <span style={{ fontSize: "0.9rem", color: "#666" }} aria-live="polite">
+              Page {page} of {pages} &mdash; {total.toLocaleString()} total entries
             </span>
             <button
               onClick={() => fetchLogs(page + 1)}
               disabled={page === pages}
+              aria-label="Next page"
               style={{
                 ...pageBtnStyle,
                 opacity: page === pages ? 0.5 : 1,

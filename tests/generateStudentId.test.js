@@ -23,7 +23,7 @@ describe('generateStudentId', () => {
 
   test('throws after exhausting all attempts', async () => {
     mockExists.mockResolvedValue(true);
-    await expect(generateStudentId(3)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' });
+    await expect(generateStudentId(3)).rejects.toMatchObject({ code: 'STUDENT_ID_GENERATION_FAILED' });
     expect(mockExists).toHaveBeenCalledTimes(3);
   });
 

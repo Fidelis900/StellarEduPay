@@ -17,20 +17,21 @@ const { getAuditLogs, getRecentAuditLogs } = require('../services/auditService')
 async function getAuditLogsEndpoint(req, res, next) {
   try {
     const { schoolId } = req;
-    const { action, targetType, performedBy, startDate, endDate, page, limit } = req.query;
+    const { action, targetType, performedBy, result, startDate, endDate, page, limit } = req.query;
 
-    const result = await getAuditLogs({
+    const auditResult = await getAuditLogs({
       schoolId,
       action,
       targetType,
       performedBy,
+      result,
       startDate,
       endDate,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 50,
     });
 
-    res.json(result);
+    res.json(auditResult);
   } catch (err) {
     next(err);
   }

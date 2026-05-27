@@ -86,20 +86,44 @@ paymentSchema.virtual('stellarExplorerUrl').get(function () {
   return this.explorerUrl;
 });
 
+/**
+ * Allowed manual status transitions, mirroring the controller's ALLOWED_TRANSITIONS.
+ * This table is the single source of truth for model-level transition validation.
+ *
+ * SUCCESS   → DISPUTED  : admin marks a confirmed payment as disputed
+ * PENDING   → FAILED    : admin manually fails a stuck pending payment
+ * SUBMITTED → FAILED    : admin manually fails a stuck submitted payment
+ *
+ * All other transitions (e.g. FAILED → SUCCESS) are explicitly disallowed.
+ */
+const PAYMENT_STATUS_TRANSITIONS = {
+  SUCCESS:   ['DISPUTED'],
+  PENDING:   ['FAILED'],
+  SUBMITTED: ['FAILED'],
+};
+
 paymentSchema.pre('save', function (next) {
   // Use in-memory Mongoose helpers instead of a DB query to avoid an N+1
   // round-trip on every save. this.isNew is true for inserts; for existing
   // documents Mongoose tracks the original field values so we can check the
   // persisted status without any additional database call.
   if (!this.isNew) {
-    // $__getValue returns the current (possibly modified) value.
-    // For the immutability check we need the *original* persisted status.
+    // For the transition check we need the *original* persisted status.
     // Mongoose stores it in this.$__.savedState when the document was loaded.
     const savedState = this.$__ && this.$__.savedState;
-    const originalStatus = savedState ? savedState.status : this.status;
+    const originalStatus = savedState ? savedState.status : null;
+    const newStatus = this.status;
 
-    if (originalStatus === 'SUCCESS' || originalStatus === 'FAILED') {
-      return next(new Error('Payment audit trail is immutable once in SUCCESS or FAILED state'));
+    if (originalStatus !== null && originalStatus !== newStatus) {
+      // Status is being changed — validate against the allowed transition table.
+      const allowed = PAYMENT_STATUS_TRANSITIONS[originalStatus] || [];
+      if (!allowed.includes(newStatus)) {
+        const err = new Error(
+          `Payment status transition from ${originalStatus} to ${newStatus} is not allowed`,
+        );
+        err.code = 'INVALID_TRANSITION';
+        return next(err);
+      }
     }
   }
 
