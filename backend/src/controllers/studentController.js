@@ -24,6 +24,15 @@ async function registerStudent(req, res, next) {
       return next(err);
     }
 
+    // Check if student was previously soft-deleted
+    const deletedStudent = await Student.findOne({ schoolId, studentId }).includeDeleted();
+    if (deletedStudent && deletedStudent.deletedAt !== null) {
+      const err = new Error(`Student ID "${studentId}" was previously deleted. Cannot re-register with the same ID.`);
+      err.code = 'STUDENT_PREVIOUSLY_DELETED';
+      err.status = 409;
+      return next(err);
+    }
+
     const escapedName = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const similarStudent = await Student.findOne({
       schoolId,
@@ -135,12 +144,29 @@ async function getAllStudents(req, res, next) {
 async function deleteStudent(req, res, next) {
   try {
     const { studentId } = req.params;
-    const student = await Student.findOneAndDelete({ schoolId: req.schoolId, studentId });
+    
+    // Check if student exists and is not already deleted
+    const student = await Student.findOne({ schoolId: req.schoolId, studentId });
     if (!student) {
       const err = new Error('Student not found');
       err.code = 'NOT_FOUND';
       return next(err);
     }
+
+    // Check if student was previously soft-deleted
+    if (student.deletedAt !== null) {
+      const err = new Error(`Student "${studentId}" was previously deleted. Cannot re-register with the same ID without explicit confirmation.`);
+      err.code = 'STUDENT_PREVIOUSLY_DELETED';
+      err.status = 409;
+      return next(err);
+    }
+
+    // Perform soft delete
+    const deletedStudent = await Student.findOneAndUpdate(
+      { schoolId: req.schoolId, studentId },
+      { deletedAt: new Date() },
+      { new: true }
+    );
 
     // Mark all associated payments as orphaned so they are excluded from reports
     const Payment = require('../models/paymentModel');
