@@ -74,12 +74,25 @@ async function createFeeStructure(req, res, next) {
 // GET /api/fees
 async function getAllFeeStructures(req, res, next) {
   try {
+    const includeDeleted = String(req.query.includeDeleted).toLowerCase() === 'true';
     const cacheKey = KEYS.feesAll();
-    const cached = get(cacheKey);
-    if (cached !== undefined) return res.json(cached);
 
-    const fees = await FeeStructure.find({ schoolId: req.schoolId, isActive: true }).sort({ className: 1 });
-    set(cacheKey, fees, TTL.FEES);
+    if (!includeDeleted) {
+      const cached = get(cacheKey);
+      if (cached !== undefined) return res.json(cached);
+    }
+
+    const query = FeeStructure.find({
+      schoolId: req.schoolId,
+      isActive: true,
+      ...(includeDeleted ? {} : { deletedAt: null }),
+    });
+
+    if (includeDeleted) query.includeDeleted();
+
+    const fees = await query.sort({ className: 1 });
+
+    if (!includeDeleted) set(cacheKey, fees, TTL.FEES);
     res.json(fees);
   } catch (err) {
     next(err);
@@ -97,6 +110,7 @@ async function getFeeByClass(req, res, next) {
     const fee = await FeeStructure.findOne({
       schoolId: req.schoolId,
       className: req.params.className,
+      deletedAt: null,
       isActive: true,
     });
     if (!fee) {
