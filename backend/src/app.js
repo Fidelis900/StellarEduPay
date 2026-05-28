@@ -28,6 +28,8 @@ const { startReminderScheduler, stopReminderScheduler } = require('./services/re
 const { startWorker: startTxQueueWorker, stopWorker: stopTxQueueWorker } = require('./services/transactionQueueService');
 const { startSessionCleanupScheduler, stopSessionCleanupScheduler } = require('./services/sessionCleanupService');
 const { startReconciliationScheduler, stopReconciliationScheduler } = require('./services/reconciliationService');
+const { closeQueue } = require('./queue/transactionQueue');
+const bullMQRetryService = require('./services/bullMQRetryService');
 const { initializeRetryQueue, setupMonitoring } = require('./config/retryQueueSetup');
 const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/requestLogger');
@@ -194,15 +196,23 @@ const server = require.main === module
 async function shutdown(signal) {
   logger.info(`Received ${signal} signal — starting graceful shutdown`);
 
-  const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS, 10) || 10_000;
+  const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS, 10) || 30_000;
 
   // Stop background services — no new work accepted
   stopPolling();
   retrySelector.stop();
-  stopTxQueueWorker();
   stopReminderScheduler();
   stopSessionCleanupScheduler();
   stopReconciliationScheduler();
+
+  try {
+    await stopTxQueueWorker();
+    await closeQueue();
+    await bullMQRetryService.shutdownQueue();
+    logger.info('BullMQ resources closed cleanly');
+  } catch (err) {
+    logger.error('Error closing BullMQ resources during shutdown', { error: err.message });
+  }
 
   // Force exit after SHUTDOWN_TIMEOUT_MS regardless of in-flight requests
   const forceExitTimer = setTimeout(() => {
