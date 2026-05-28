@@ -1086,11 +1086,35 @@ async function getSuspiciousPayments(req, res, next) {
 
 async function getPendingPayments(req, res, next) {
   try {
-    const pending = await Payment.find({
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const skip = (pageNum - 1) * pageSize;
+
+    const filter = {
       schoolId: req.schoolId,
       confirmationStatus: "pending_confirmation",
-    }).sort({ confirmedAt: -1 });
-    res.json({ count: pending.length, pending });
+    };
+
+    const [pending, total] = await Promise.all([
+      Payment.find(filter)
+        .sort({ confirmedAt: -1 })
+        .skip(skip)
+        .limit(pageSize),
+      Payment.countDocuments(filter),
+    ]);
+
+    res.json({
+      count: pending.length,
+      pending,
+      pagination: {
+        page: pageNum,
+        limit: pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+        hasNext: pageNum < Math.ceil(total / pageSize),
+        hasPrev: pageNum > 1,
+      },
+    });
   } catch (err) {
     next(err);
   }
