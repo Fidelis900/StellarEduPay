@@ -13,7 +13,8 @@
     "next": "^14.0.0",
     "qrcode.react": "^4.2.0",
     "react": "^18.0.0",
-    "react-dom": "^18.0.0"
+    "react-dom": "^18.0.0",
+    "react-window": "1.8.10"
   },
   "devDependencies": {
     "eslint": "^8.0.0",
