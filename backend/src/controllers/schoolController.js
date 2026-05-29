@@ -136,6 +136,10 @@ async function getSchool(req, res, next) {
     const school = await School.findOne({
       slug: req.params.schoolSlug.toLowerCase(),
       isActive: true,
+    }, {
+      jwtSecret: 0,
+      webhookSecret: 0,
+      internalNotes: 0,
     }).lean();
     if (!school) {
       const e = new Error('School not found');

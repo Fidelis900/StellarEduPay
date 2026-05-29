@@ -76,4 +76,14 @@ const schoolSchema = new mongoose.Schema(
 schoolSchema.index({ slug: 1 }, { unique: true });
 schoolSchema.index({ slug: 1, isActive: 1 });
 
+// toJSON transform to exclude sensitive fields
+schoolSchema.set('toJSON', {
+  transform: (doc, ret) => {
+    delete ret.jwtSecret;
+    delete ret.webhookSecret;
+    delete ret.internalNotes;
+    return ret;
+  },
+});
+
 module.exports = mongoose.model('School', schoolSchema);
