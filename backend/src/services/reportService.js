@@ -118,10 +118,19 @@ async function generateReport({ schoolId, startDate, endDate, timezone = 'UTC' }
     { $sort: { className: 1 } },
   ]);
 
+  // Calculate dateRangeDays to indicate actual range returned
+  let dateRangeDays = null;
+  if (startDate && endDate) {
+    const start = new Date(startDate + 'T00:00:00.000Z');
+    const end = new Date(endDate + 'T23:59:59.999Z');
+    dateRangeDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+  }
+
   return {
     generatedAt: new Date().toISOString(),
     schoolId,
     period: { startDate: startDate || null, endDate: endDate || null },
+    dateRangeDays,
     summary: { ...totals, fullyPaidStudentCount: fullyPaidCount },
     byDate,
     byClass,
@@ -155,6 +164,9 @@ function reportToCsv(report) {
   lines.push(`School ID,${csvEscape(report.schoolId)}`);
   lines.push(`Period Start,${csvEscape(report.period.startDate || 'all time')}`);
   lines.push(`Period End,${csvEscape(report.period.endDate || 'all time')}`);
+  if (report.dateRangeDays !== null) {
+    lines.push(`Date Range Days,${csvEscape(report.dateRangeDays)}`);
+  }
   lines.push('');
   lines.push('--- Summary ---');
   lines.push(`Total Amount,${csvEscape(report.summary.totalAmount)}`);
