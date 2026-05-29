@@ -29,6 +29,8 @@ const { startReminderScheduler, stopReminderScheduler } = require('./services/re
 const { startWorker: startTxQueueWorker, stopWorker: stopTxQueueWorker } = require('./services/transactionQueueService');
 const { startSessionCleanupScheduler, stopSessionCleanupScheduler } = require('./services/sessionCleanupService');
 const { startReconciliationScheduler, stopReconciliationScheduler } = require('./services/reconciliationService');
+const { closeQueue } = require('./queue/transactionQueue');
+const bullMQRetryService = require('./services/bullMQRetryService');
 const { initializeRetryQueue, setupMonitoring } = require('./config/retryQueueSetup');
 const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/requestLogger');
@@ -39,18 +41,26 @@ const { healthCheck } = require('./controllers/healthController');
 const logger = require('./utils/logger');
 
 const morgan = require('morgan');
+const cookieParser = require('cookie-parser');
 const { parseAllowedOrigins } = require('./utils/corsOrigins');
 
 const allowedOrigins = parseAllowedOrigins();
 
 const app = express();
 
+// Trust the number of proxy hops configured via TRUSTED_PROXY_HOPS (default: 1).
+// This ensures Express derives req.ip from the correct X-Forwarded-For entry
+// rather than trusting client-supplied headers, which would allow rate-limit bypass.
+app.set('trust proxy', parseInt(process.env.TRUSTED_PROXY_HOPS || '1', 10));
+
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(cors({
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-School-ID', 'Idempotency-Key'],
+  credentials: true,
 }));
+app.use(cookieParser());
 // The backend serves only JSON API responses — no HTML, scripts, or styles.
 // CSP directives for HTML content (scriptSrc, styleSrc, imgSrc, etc.) are
 // irrelevant here and have been removed. The frontend (Next.js) owns those.
@@ -177,6 +187,7 @@ connectWithRetry().then(async () => {
       logger.error('Failed to initialize retry queue system', { error: error.message });
     }
   } else {
+    logger.warn('REDIS_HOST is not configured — using MongoDB retry backend. Rate-limit counters are in-process only and will reset on restart. Set REDIS_HOST for production deployments.');
     logger.info('All services initialized successfully (MongoDB retry backend)');
   }
 });
@@ -191,15 +202,23 @@ const server = require.main === module
 async function shutdown(signal) {
   logger.info(`Received ${signal} signal — starting graceful shutdown`);
 
-  const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS, 10) || 10_000;
+  const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS, 10) || 30_000;
 
   // Stop background services — no new work accepted
   stopPolling();
   retrySelector.stop();
-  stopTxQueueWorker();
   stopReminderScheduler();
   stopSessionCleanupScheduler();
   stopReconciliationScheduler();
+
+  try {
+    await stopTxQueueWorker();
+    await closeQueue();
+    await bullMQRetryService.shutdownQueue();
+    logger.info('BullMQ resources closed cleanly');
+  } catch (err) {
+    logger.error('Error closing BullMQ resources during shutdown', { error: err.message });
+  }
 
   // Force exit after SHUTDOWN_TIMEOUT_MS regardless of in-flight requests
   const forceExitTimer = setTimeout(() => {

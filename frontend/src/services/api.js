@@ -5,6 +5,7 @@ const TIMEOUT_MS = parseInt(process.env.NEXT_PUBLIC_REQUEST_TIMEOUT_MS || "15000
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
   timeout: TIMEOUT_MS,
+  withCredentials: true,
 });
 
 api.interceptors.response.use(
@@ -37,6 +38,7 @@ export const getSyncStatus = () => api.get("/payments/sync/status");
 export const getFeeStructures = () => api.get("/fees");
 export const createFeeStructure = (data) => api.post("/fees", data);
 export const getFeeByClass = (className) => api.get(`/fees/${className}`);
+export const deleteFeeStructure = (className) => api.delete(`/fees/${encodeURIComponent(className)}`);
 
 // Reports
 export const getReport = (params = {}) => api.get("/reports", { params });
