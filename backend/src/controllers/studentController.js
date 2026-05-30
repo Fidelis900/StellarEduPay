@@ -24,6 +24,19 @@ async function registerStudent(req, res, next) {
       return next(err);
     }
 
+    // Check student quota
+    const School = require('../models/schoolModel');
+    const school = await School.findOne({ schoolId });
+    if (school && school.maxStudents) {
+      const studentCount = await Student.countDocuments({ schoolId, deletedAt: null });
+      if (studentCount >= school.maxStudents) {
+        const err = new Error(`School has reached maximum student quota of ${school.maxStudents}`);
+        err.code = 'STUDENT_QUOTA_EXCEEDED';
+        err.status = 403;
+        return next(err);
+      }
+    }
+
     // Check if student was previously soft-deleted
     const deletedStudent = await Student.findOne({ schoolId, studentId }).includeDeleted();
     if (deletedStudent && deletedStudent.deletedAt !== null) {
@@ -468,6 +481,12 @@ async function bulkImportStudents(req, res, next) {
 
     const results = { total: rows.length, created: 0, failed: 0, details: [] };
 
+    // Check student quota
+    const School = require('../models/schoolModel');
+    const school = await School.findOne({ schoolId });
+    const currentStudentCount = await Student.countDocuments({ schoolId, deletedAt: null });
+    const quotaRemaining = school && school.maxStudents ? school.maxStudents - currentStudentCount : Infinity;
+
     // Pre-fetch fee structures for all unique class names (one query per unique class, not per row)
     const uniqueClasses = [...new Set(rows.map(r => r.class?.trim()).filter(Boolean))];
     const feeStructureMap = {};
@@ -484,6 +503,7 @@ async function bulkImportStudents(req, res, next) {
 
     // Validate all rows first
     const validatedRows = [];
+    let quotaExceededAt = -1;
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const validationErrors = validateStudentRow(row);
@@ -491,6 +511,23 @@ async function bulkImportStudents(req, res, next) {
       if (validationErrors.length > 0) {
         results.failed++;
         results.details.push({ index: i, studentId: row.studentId || null, status: 'failed', errors: validationErrors });
+        continue;
+      }
+
+      // Check quota before adding to validatedRows
+      if (quotaExceededAt === -1 && validatedRows.length >= quotaRemaining) {
+        quotaExceededAt = i;
+      }
+
+      if (quotaExceededAt !== -1 && i >= quotaExceededAt) {
+        results.failed++;
+        results.details.push({
+          index: i,
+          studentId: row.studentId,
+          status: 'failed',
+          errors: [`School has reached maximum student quota of ${school.maxStudents}`],
+          code: 'STUDENT_QUOTA_EXCEEDED',
+        });
         continue;
       }
 
