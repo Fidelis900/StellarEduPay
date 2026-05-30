@@ -510,7 +510,7 @@ async function bulkImportStudents(req, res, next) {
 
       if (validationErrors.length > 0) {
         results.failed++;
-        results.details.push({ index: i, studentId: row.studentId || null, status: 'failed', errors: validationErrors });
+        results.details.push({ row: i + 2, studentId: row.studentId || null, error: validationErrors[0], code: 'VALIDATION_ERROR' });
         continue;
       }
 
@@ -522,10 +522,9 @@ async function bulkImportStudents(req, res, next) {
       if (quotaExceededAt !== -1 && i >= quotaExceededAt) {
         results.failed++;
         results.details.push({
-          index: i,
+          row: i + 2,
           studentId: row.studentId,
-          status: 'failed',
-          errors: [`School has reached maximum student quota of ${school.maxStudents}`],
+          error: `School has reached maximum student quota of ${school.maxStudents}`,
           code: 'STUDENT_QUOTA_EXCEEDED',
         });
         continue;
@@ -539,10 +538,10 @@ async function bulkImportStudents(req, res, next) {
       if (assignedFee == null) {
         results.failed++;
         results.details.push({
-          index: i,
+          row: i + 2,
           studentId: row.studentId,
-          status: 'failed',
-          errors: [`No feeAmount provided and no fee structure found for class "${row.class}"`],
+          error: `No feeAmount provided and no fee structure found for class "${row.class}"`,
+          code: 'FEE_STRUCTURE_NOT_FOUND',
         });
         continue;
       }
@@ -569,7 +568,7 @@ async function bulkImportStudents(req, res, next) {
         inserted.forEach(student => {
           const originalRow = chunk.find(r => r.studentId === student.studentId);
           results.details.push({
-            index: originalRow.index,
+            row: originalRow.index + 2,
             studentId: student.studentId,
             status: 'created',
             _id: student._id,
@@ -582,7 +581,7 @@ async function bulkImportStudents(req, res, next) {
           err.insertedDocs.forEach(student => {
             const originalRow = chunk.find(r => r.studentId === student.studentId);
             results.details.push({
-              index: originalRow.index,
+              row: originalRow.index + 2,
               studentId: student.studentId,
               status: 'created',
               _id: student._id,
@@ -597,10 +596,10 @@ async function bulkImportStudents(req, res, next) {
               ? 'Student ID already exists in this school'
               : writeErr.err.message;
             results.details.push({
-              index: failedRow.index,
+              row: failedRow.index + 2,
               studentId: failedRow.studentId,
-              status: 'failed',
-              errors: [message],
+              error: message,
+              code: writeErr.err.code === 11000 ? 'DUPLICATE_STUDENT_ID' : 'INSERT_ERROR',
             });
           });
         }
