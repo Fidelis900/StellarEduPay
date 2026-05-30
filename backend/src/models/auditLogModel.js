@@ -24,6 +24,8 @@ const auditLogSchema = new mongoose.Schema(
 auditLogSchema.index({ schoolId: 1, action: 1, createdAt: -1 });
 auditLogSchema.index({ schoolId: 1, targetType: 1, createdAt: -1 });
 auditLogSchema.index({ schoolId: 1, performedBy: 1, createdAt: -1 });
+// Issue #668: Compound index for efficient pagination by schoolId and createdAt
+auditLogSchema.index({ schoolId: 1, createdAt: -1 });
 auditLogSchema.index({ createdAt: -1 });
 
 // TTL index for automatic document expiration

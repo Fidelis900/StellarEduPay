@@ -47,6 +47,85 @@ const { requireAdminAuth } = require("../middleware/auth");
 const { auditContext } = require("../middleware/auditContext");
 const { strictLimiter, verifyLimiter } = require("../middleware/rateLimiter");
 
+/**
+ * @swagger
+ * /api/payments/instructions/{studentId}:
+ *   get:
+ *     summary: Get payment instructions for a student
+ *     operationId: getPaymentInstructions
+ *     tags:
+ *       - Payments
+ *     parameters:
+ *       - in: path
+ *         name: studentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Student ID
+ *     responses:
+ *       200:
+ *         description: Payment instructions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 walletAddress:
+ *                   type: string
+ *                 memo:
+ *                   type: string
+ *                 acceptedAssets:
+ *                   type: array
+ *       404:
+ *         description: Student not found
+ */
+
+/**
+ * @swagger
+ * /api/payments/verify:
+ *   post:
+ *     summary: Verify a payment transaction
+ *     operationId: verifyPayment
+ *     tags:
+ *       - Payments
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               txHash:
+ *                 type: string
+ *                 description: Stellar transaction hash
+ *     responses:
+ *       200:
+ *         description: Payment verified
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Payment'
+ *       400:
+ *         description: Invalid transaction
+ */
+
+/**
+ * @swagger
+ * /api/payments/sync:
+ *   post:
+ *     summary: Sync payments from Stellar blockchain
+ *     operationId: syncAllPayments
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Sync completed
+ *       401:
+ *         description: Unauthorized
+ */
+
 // No school context required
 router.get("/verify/:txHash", validateTxHashParam, verifyTransactionHash);
 

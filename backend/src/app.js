@@ -109,6 +109,27 @@ app.use('/api/auth', authRoutes);
 app.get('/api/consistency', requireAdminAuth, runConsistencyCheck);
 app.get('/health', healthCheck);
 
+// Issue #671: OpenAPI/Swagger documentation
+try {
+  const swaggerSpecs = require('./config/swagger');
+  app.get('/api/docs.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.json(swaggerSpecs);
+  });
+
+  // Swagger UI (development only)
+  if (process.env.NODE_ENV !== 'production') {
+    const swaggerUi = require('swagger-ui-express');
+    app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, {
+      swaggerOptions: {
+        url: '/api/docs.json',
+      },
+    }));
+  }
+} catch (err) {
+  logger.warn('Swagger documentation not available', { error: err.message });
+}
+
 // ── Error handling ────────────────────────────────────────────────────────────
 app.use(notFoundHandler);
 app.use(globalErrorHandler);
