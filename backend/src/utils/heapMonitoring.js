@@ -2,37 +2,20 @@
 
 const logger = require('./logger');
 
-/**
- * Monitors Node.js heap usage and logs warnings when usage exceeds 80% of max-old-space-size.
- * Helps detect memory leaks before OOM kill occurs.
- */
 function startHeapMonitoring() {
-  const v8 = require('v8');
-  const heapStats = v8.getHeapStatistics();
-  const maxHeapSize = heapStats.heap_size_limit;
-  const warningThreshold = maxHeapSize * 0.8;
-
-  const MONITORING_INTERVAL_MS = 30000; // Check every 30 seconds
-
-  const interval = setInterval(() => {
-    const heapUsed = process.memoryUsage().heapUsed;
-    const heapUsedPercent = (heapUsed / maxHeapSize) * 100;
-
-    if (heapUsed > warningThreshold) {
+  const { heap_size_limit: max } = require('v8').getHeapStatistics();
+  const threshold = max * 0.8;
+  const iv = setInterval(() => {
+    const used = process.memoryUsage().heapUsed;
+    if (used > threshold) {
       logger.warn('HEAP_USAGE_WARNING', {
-        heapUsedBytes: heapUsed,
-        heapUsedMB: Math.round(heapUsed / 1024 / 1024),
-        maxHeapSizeMB: Math.round(maxHeapSize / 1024 / 1024),
-        usagePercent: Math.round(heapUsedPercent),
+        heapUsedMB: Math.round(used / 1024 / 1024),
+        maxHeapSizeMB: Math.round(max / 1024 / 1024),
+        usagePercent: Math.round((used / max) * 100),
       });
     }
-  }, MONITORING_INTERVAL_MS);
-
-  interval.unref(); // Don't keep the event loop alive just for this timer
-  logger.info('Heap monitoring started', {
-    maxHeapSizeMB: Math.round(maxHeapSize / 1024 / 1024),
-    warningThresholdMB: Math.round(warningThreshold / 1024 / 1024),
-  });
+  }, 30000);
+  iv.unref();
 }
 
 module.exports = { startHeapMonitoring };
