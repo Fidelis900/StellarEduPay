@@ -14,6 +14,8 @@ function buildApp(trustedHops) {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests', code: 'RATE_LIMIT_EXCEEDED' },
+    // Key by socket address to prevent X-Forwarded-For bypass in test/single-hop environments
+    keyGenerator: (req) => req.socket.remoteAddress || req.ip,
   });
 
   app.use(limiter);

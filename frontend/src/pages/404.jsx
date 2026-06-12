@@ -1,5 +1,4 @@
-import Link from 'next/link';
-import Navbar from '../components/Navbar';
+import Link from "next/link";
 
 export default function Custom404() {
   return (
@@ -15,102 +14,80 @@ export default function Custom404() {
         }
         .not-found-card {
           text-align: center;
-          max-width: 500px;
-          background: var(--bg);
-          border: 1px solid var(--border);
-          padding: 3rem 2rem;
-          border-radius: 12px;
-          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        .not-found-icon {
-          font-size: 5rem;
-          margin-bottom: 1rem;
+          max-width: 480px;
+          width: 100%;
         }
         .not-found-code {
-          font-size: 4rem;
-          font-weight: 700;
-          color: var(--primary);
-          margin: 0 0 0.5rem 0;
+          font-size: clamp(5rem, 20vw, 8rem);
+          font-weight: 900;
+          letter-spacing: -0.06em;
           line-height: 1;
+          background: linear-gradient(135deg, #7ec8e3 0%, #6366f1 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+          margin-bottom: 1rem;
         }
         .not-found-title {
           font-size: 1.5rem;
-          font-weight: 600;
+          font-weight: 700;
           color: var(--text);
-          margin: 0 0 1rem 0;
+          margin-bottom: 0.625rem;
+          letter-spacing: -0.02em;
         }
         .not-found-desc {
-          font-size: 1rem;
-          color: var(--muted);
-          line-height: 1.6;
+          font-size: 0.9375rem;
+          color: var(--text-muted);
+          line-height: 1.65;
+          margin-bottom: 2rem;
+          max-width: 380px;
+          margin-left: auto;
+          margin-right: auto;
+        }
+        .not-found-actions {
+          display: flex;
+          gap: 0.75rem;
+          justify-content: center;
+          flex-wrap: wrap;
           margin-bottom: 2rem;
         }
-        .not-found-btn {
-          display: inline-block;
-          padding: 0.75rem 2rem;
-          background: var(--primary);
-          color: #fff;
-          text-decoration: none;
-          border-radius: 8px;
-          font-size: 1rem;
-          font-weight: 600;
-          transition: opacity 0.2s;
-        }
-        .not-found-btn:hover {
-          opacity: 0.85;
-        }
         .not-found-links {
-          margin-top: 2rem;
-          padding-top: 1.5rem;
+          padding-top: 1.75rem;
           border-top: 1px solid var(--border);
-        }
-        .not-found-links-label {
-          font-size: 0.9rem;
-          color: var(--muted);
-          margin-bottom: 0.75rem;
-        }
-        .not-found-links-row {
           display: flex;
-          gap: 1rem;
+          gap: 1.25rem;
           justify-content: center;
           flex-wrap: wrap;
         }
         .not-found-link {
-          color: var(--accent);
-          text-decoration: none;
-          font-size: 0.9rem;
+          color: var(--text-muted);
+          font-size: 0.875rem;
+          transition: color 0.15s;
         }
-        .not-found-link:hover {
-          text-decoration: underline;
-        }
+        .not-found-link:hover { color: var(--accent); }
       `}</style>
-
-      <Navbar />
 
       <div className="not-found-wrap">
         <div className="not-found-card">
-          <div className="not-found-icon" aria-hidden="true">🌟</div>
-
-          <h1 className="not-found-code">404</h1>
-
-          <h2 className="not-found-title">Page Not Found</h2>
-
+          <div className="not-found-code" aria-label="404">404</div>
+          <h1 className="not-found-title">Page Not Found</h1>
           <p className="not-found-desc">
-            Oops! The page you&apos;re looking for doesn&apos;t exist in StellarEduPay.
-            It might have been moved or deleted.
+            The page you&apos;re looking for doesn&apos;t exist. It may have been moved or the URL is incorrect.
           </p>
 
-          <Link href="/" className="not-found-btn">
-            ← Back to Home
-          </Link>
+          <div className="not-found-actions">
+            <Link href="/" className="btn btn-primary">
+              ← Back to Home
+            </Link>
+            <Link href="/pay-fees" className="btn btn-ghost">
+              Pay Fees
+            </Link>
+          </div>
 
           <div className="not-found-links">
-            <p className="not-found-links-label">Or try these pages:</p>
-            <div className="not-found-links-row">
-              <Link href="/dashboard" className="not-found-link">Dashboard</Link>
-              <Link href="/pay-fees" className="not-found-link">Pay Fees</Link>
-              <Link href="/reports" className="not-found-link">Reports</Link>
-            </div>
+            <Link href="/dashboard" className="not-found-link">Dashboard</Link>
+            <Link href="/reports" className="not-found-link">Reports</Link>
+            <Link href="/login" className="not-found-link">Admin Login</Link>
           </div>
         </div>
       </div>

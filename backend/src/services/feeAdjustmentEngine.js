@@ -93,10 +93,12 @@ class DynamicFeeAdjustmentEngine {
       if (rule.condition(context)) {
         let adjustmentAmount = 0;
 
+        const isFixed = rule.isFixed === true ||
+          (typeof rule.description === 'string' && rule.description.toLowerCase().startsWith('fixed'));
         if (rule.type === 'discount') {
-          adjustmentAmount = -(currentFee * (rule.value / 100));
+          adjustmentAmount = isFixed ? -rule.value : -(currentFee * (rule.value / 100));
         } else if (rule.type === 'penalty') {
-          adjustmentAmount = currentFee * (rule.value / 100);
+          adjustmentAmount = isFixed ? rule.value : currentFee * (rule.value / 100);
         } else {
           adjustmentAmount = rule.value; // fixed amount
         }

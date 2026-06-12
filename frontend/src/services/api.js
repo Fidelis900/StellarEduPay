@@ -2,10 +2,24 @@ import axios from "axios";
 
 const TIMEOUT_MS = parseInt(process.env.NEXT_PUBLIC_REQUEST_TIMEOUT_MS || "15000", 10);
 
+const SCHOOL_ID = process.env.NEXT_PUBLIC_SCHOOL_ID || "SCH001";
+
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
   timeout: TIMEOUT_MS,
   withCredentials: true,
+});
+
+// Attach the school context header to every request unless one is already set.
+// The backend resolves school scope from X-School-ID (or X-School-Slug).
+api.interceptors.request.use((config) => {
+  const hasSchoolHeader = Object.keys(config.headers || {}).some(
+    (h) => h.toLowerCase() === "x-school-id" || h.toLowerCase() === "x-school-slug"
+  );
+  if (!hasSchoolHeader && SCHOOL_ID) {
+    config.headers = { ...config.headers, "X-School-ID": SCHOOL_ID };
+  }
+  return config;
 });
 
 api.interceptors.response.use(

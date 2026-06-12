@@ -308,8 +308,9 @@ async function disconnect(force = false) {
 // ── Health Check ────────────────────────────────────────────────────────────────
 async function healthCheck() {
   try {
-    if (!connectionState.isConnected) {
-      return { healthy: false, reason: 'Not connected' };
+    const readyState = mongoose.connection.readyState;
+    if (readyState !== 1) {
+      return { healthy: false, reason: 'Not connected', readyState };
     }
 
     const start = Date.now();
@@ -319,9 +320,7 @@ async function healthCheck() {
     return {
       healthy: true,
       latency,
-      readyState: mongoose.connection.readyState,
-      poolSize: mongoose.connection.base?.poolConfig?.size || 0,
-      availableConnections: mongoose.connection.base?.poolConfig?.availableConnectionsCount || 0,
+      readyState,
     };
   } catch (error) {
     return { healthy: false, reason: error.message };

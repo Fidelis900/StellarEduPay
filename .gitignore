@@ -1,7 +1,38 @@
+# Dependencies
 node_modules/
+
+# Environment files — never commit secrets
 .env
 .env.local
-*.log
+.env.*.local
+
+# Logs
 logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
 .next/
 dist/
+build/
+out/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup archives (managed by scripts/backup.sh)
+backups/

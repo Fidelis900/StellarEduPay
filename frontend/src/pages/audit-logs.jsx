@@ -1,65 +1,68 @@
 import { useState, useEffect } from "react";
 import { getAuditLogs } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
+import {
+  IconChevronLeft, IconChevronRight, IconAlertTriangle, IconCheck,
+} from "../components/Icons";
+import PageHero from "../components/PageHero";
 
 function formatTimestamp(isoString) {
   if (!isoString) return "N/A";
-  const date = new Date(isoString);
-  return date.toLocaleString();
+  return new Date(isoString).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
+
+const ACTION_LABELS = {
+  student_create:       "Student Created",
+  student_update:       "Student Updated",
+  student_delete:       "Student Deleted",
+  student_bulk_import:  "Bulk Import",
+  payment_manual_sync:  "Manual Sync",
+  payment_finalize:     "Payment Finalized",
+  fee_create:           "Fee Created",
+  fee_update:           "Fee Updated",
+  fee_delete:           "Fee Deleted",
+  school_create:        "School Created",
+  school_update:        "School Updated",
+  school_deactivate:    "School Deactivated",
+};
 
 function getActionLabel(action) {
-  const labels = {
-    student_create: "Student Created",
-    student_update: "Student Updated",
-    student_delete: "Student Deleted",
-    student_bulk_import: "Bulk Import",
-    payment_manual_sync: "Manual Sync",
-    payment_finalize: "Payment Finalized",
-    fee_create: "Fee Created",
-    fee_update: "Fee Updated",
-    fee_delete: "Fee Deleted",
-    school_create: "School Created",
-    school_update: "School Updated",
-    school_deactivate: "School Deactivated",
-  };
-  return labels[action] || action;
+  return ACTION_LABELS[action] || action;
 }
 
-export default function AuditLogsPage() {
-  const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [pages, setPages] = useState(1);
+const ACTION_OPTIONS = Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label }));
 
-  // Filters
-  const [actionFilter, setActionFilter] = useState("");
+export default function AuditLogsPage() {
+  const [logs, setLogs]               = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState(null);
+  const [page, setPage]               = useState(1);
+  const [total, setTotal]             = useState(0);
+  const [pages, setPages]             = useState(1);
+  const [expandedId, setExpandedId]   = useState(null);
+
+  const [actionFilter, setActionFilter]         = useState("");
   const [targetTypeFilter, setTargetTypeFilter] = useState("");
-  const [resultFilter, setResultFilter] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [resultFilter, setResultFilter]         = useState("");
+  const [startDate, setStartDate]               = useState("");
+  const [endDate, setEndDate]                   = useState("");
 
   const fetchLogs = (p = page) => {
     setLoading(true);
     setError(null);
-
     const params = { page: p, limit: 50 };
-    if (actionFilter) params.action = actionFilter;
+    if (actionFilter)     params.action     = actionFilter;
     if (targetTypeFilter) params.targetType = targetTypeFilter;
-    if (resultFilter) params.result = resultFilter;
-    // Convert local date strings (YYYY-MM-DD) to ISO 8601 UTC so the backend
-    // receives the correct boundary regardless of the user's timezone.
-    // startDate → start of that local day (T00:00:00 local → UTC)
-    // endDate   → end of that local day (T23:59:59.999 local → UTC)
-    if (startDate) params.startDate = new Date(startDate).toISOString();
+    if (resultFilter)     params.result     = resultFilter;
+    if (startDate)        params.startDate  = new Date(startDate).toISOString();
     if (endDate) {
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
       params.endDate = end.toISOString();
     }
-
     getAuditLogs(params)
       .then(({ data }) => {
         setLogs(data.logs);
@@ -68,335 +71,310 @@ export default function AuditLogsPage() {
         setPage(data.page);
       })
       .catch((err) => {
-        setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || "Failed to load audit logs. Please try again.");
-        console.error(err);
+        setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || "Failed to load audit logs.");
       })
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    fetchLogs(1);
-  }, [actionFilter, targetTypeFilter, resultFilter, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchLogs(1); }, [actionFilter, targetTypeFilter, resultFilter, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div style={containerStyle}>
-      <h1 style={titleStyle}>Audit Logs</h1>
+    <>
+      <style>{`
+        .al-filters {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+          gap: 0.75rem;
+          padding: 1.25rem 1.5rem;
+          border-bottom: 1px solid var(--border);
+          background: var(--bg-subtle, var(--bg));
+        }
+        .al-filter-label {
+          display: block;
+          font-size: 0.7rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: var(--text-muted);
+          margin-bottom: 0.3rem;
+        }
+        .al-filter-input {
+          width: 100%;
+          padding: 0.425rem 0.65rem;
+          border: 1.5px solid var(--border);
+          border-radius: var(--radius-sm);
+          font-size: 0.825rem;
+          font-family: inherit;
+          color: var(--text);
+          background: var(--card-bg);
+          outline: none;
+          transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .al-filter-input:focus {
+          border-color: var(--accent);
+          box-shadow: 0 0 0 3px var(--accent-subtle);
+        }
+        .al-empty {
+          padding: 3.5rem;
+          text-align: center;
+          color: var(--text-muted);
+        }
+        .al-detail-pre {
+          margin-top: 0.75rem;
+          padding: 0.625rem 0.75rem;
+          background: var(--bg-subtle, var(--bg));
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          font-size: 0.72rem;
+          font-family: monospace;
+          overflow: auto;
+          max-height: 220px;
+          white-space: pre-wrap;
+          word-break: break-all;
+          color: var(--text);
+        }
+        .al-target-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 0.15rem 0.5rem;
+          border-radius: 4px;
+          background: var(--accent-subtle);
+          color: var(--accent);
+          font-size: 0.65rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          margin-right: 0.375rem;
+          flex-shrink: 0;
+        }
+        .al-expand-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.3rem;
+          padding: 0.2rem 0.55rem;
+          border: 1px solid var(--border);
+          border-radius: 4px;
+          background: transparent;
+          color: var(--text-muted);
+          font-size: 0.72rem;
+          font-family: inherit;
+          cursor: pointer;
+          transition: background 0.12s;
+        }
+        .al-expand-btn:hover { background: var(--bg-subtle, var(--bg)); }
+        .al-result-badge-success { background: var(--success-bg); color: var(--success-text); }
+        .al-result-badge-failure { background: var(--danger-bg);  color: var(--danger-text);  }
+      `}</style>
 
-      {/* Filters */}
-      <div style={filtersStyle}>
-        <div style={filterGroupStyle}>
-          <label style={labelStyle}>Action Type</label>
-          <select
-            value={actionFilter}
-            onChange={(e) => setActionFilter(e.target.value)}
-            style={selectStyle}
-          >
-            <option value="">All Actions</option>
-            <option value="student_create">Student Created</option>
-            <option value="student_update">Student Updated</option>
-            <option value="student_delete">Student Deleted</option>
-            <option value="student_bulk_import">Bulk Import</option>
-            <option value="payment_manual_sync">Manual Sync</option>
-            <option value="payment_finalize">Payment Finalized</option>
-            <option value="fee_create">Fee Created</option>
-            <option value="fee_update">Fee Updated</option>
-            <option value="fee_delete">Fee Deleted</option>
-            <option value="school_create">School Created</option>
-            <option value="school_update">School Updated</option>
-            <option value="school_deactivate">School Deactivated</option>
-          </select>
-        </div>
+      <div className="page-wrap-wide">
+        <PageHero
+          eyebrow="Compliance"
+          title="Audit Logs"
+          subtitle="A complete, immutable trail of every administrative action across the platform."
+        />
+        {!loading && (
+          <p style={{ textAlign: "center", fontSize: "0.8125rem", color: "var(--text-muted)", marginTop: "-1.25rem", marginBottom: "1.5rem" }}>
+            {total.toLocaleString()} total entries
+          </p>
+        )}
 
-        <div style={filterGroupStyle}>
-          <label style={labelStyle}>Target Type</label>
-          <select
-            value={targetTypeFilter}
-            onChange={(e) => setTargetTypeFilter(e.target.value)}
-            style={selectStyle}
-          >
-            <option value="">All Types</option>
-            <option value="student">Student</option>
-            <option value="payment">Payment</option>
-            <option value="fee">Fee</option>
-            <option value="school">School</option>
-          </select>
-        </div>
-
-        <div style={filterGroupStyle}>
-          <label style={labelStyle}>Result</label>
-          <select
-            value={resultFilter}
-            onChange={(e) => setResultFilter(e.target.value)}
-            style={selectStyle}
-            aria-label="Filter by result"
-          >
-            <option value="">All Results</option>
-            <option value="success">Success</option>
-            <option value="failure">Failure</option>
-          </select>
-        </div>
-
-        <div style={filterGroupStyle}>
-          <label style={labelStyle}>Start Date</label>
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-
-        <div style={filterGroupStyle}>
-          <label style={labelStyle}>End Date</label>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-      </div>
-
-      {/* Results */}
-      {loading ? (
-        <p style={{ color: "var(--muted)" }}>Loading audit logs...</p>
-      ) : error ? (
-        <p style={{ color: "var(--error-color)" }}>{error}</p>
-      ) : logs.length === 0 ? (
-        <p style={{ color: "var(--muted)" }}>No audit logs found</p>
-      ) : (
-        <>
-          <div style={tableContainerStyle}>
-            <table style={tableStyle}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>Timestamp</th>
-                  <th style={thStyle}>Action</th>
-                  <th style={thStyle}>Performed By</th>
-                  <th style={thStyle}>Target</th>
-                  <th style={thStyle}>Result</th>
-                  <th style={thStyle}>Details</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((log) => (
-                  <tr key={log._id} style={trStyle}>
-                    <td style={tdStyle}>{formatTimestamp(log.createdAt)}</td>
-                    <td style={tdStyle}>{getActionLabel(log.action)}</td>
-                    <td style={tdStyle}>{log.performedBy}</td>
-                    <td style={tdStyle}>
-                      <span style={targetBadgeStyle}>{log.targetType}</span>
-                      {" "}
-                      {log.targetId}
-                    </td>
-                    <td style={tdStyle}>
-                      <span
-                        style={{
-                          ...resultBadgeStyle,
-                          background: log.result === "success" ? "var(--success-bg)" : "var(--error-bg)",
-                          color: log.result === "success" ? "var(--success-color)" : "var(--error-color)",
-                        }}
-                      >
-                        {log.result}
-                      </span>
-                    </td>
-                    <td style={tdStyle}>
-                      {log.errorMessage ? (
-                        <span style={{ color: "var(--error-color)", fontSize: "0.85rem" }}>
-                          {log.errorMessage}
-                        </span>
-                      ) : (
-                        <details style={{ fontSize: "0.85rem" }}>
-                          <summary style={{ cursor: "pointer", color: "var(--accent)" }}>
-                            View
-                          </summary>
-                          <pre style={preStyle}>
-                            {JSON.stringify(log.details, null, 2)}
-                          </pre>
-                        </details>
-                      )}
-                    </td>
-                  </tr>
+        <div className="card">
+          {/* Filters */}
+          <div className="al-filters">
+            <div>
+              <label className="al-filter-label">Action</label>
+              <select
+                value={actionFilter}
+                onChange={e => setActionFilter(e.target.value)}
+                className="al-filter-input"
+              >
+                <option value="">All Actions</option>
+                {ACTION_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
-              </tbody>
-            </table>
+              </select>
+            </div>
+
+            <div>
+              <label className="al-filter-label">Target Type</label>
+              <select
+                value={targetTypeFilter}
+                onChange={e => setTargetTypeFilter(e.target.value)}
+                className="al-filter-input"
+              >
+                <option value="">All Types</option>
+                {["student","payment","fee","school"].map(t => (
+                  <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="al-filter-label">Result</label>
+              <select
+                value={resultFilter}
+                onChange={e => setResultFilter(e.target.value)}
+                className="al-filter-input"
+                aria-label="Filter by result"
+              >
+                <option value="">All Results</option>
+                <option value="success">Success</option>
+                <option value="failure">Failure</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="al-filter-label">From</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                className="al-filter-input"
+              />
+            </div>
+
+            <div>
+              <label className="al-filter-label">To</label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                className="al-filter-input"
+              />
+            </div>
           </div>
+
+          {/* Alerts */}
+          {error && (
+            <div className="card-body">
+              <div role="alert" className="alert alert-danger">
+                <IconAlertTriangle size={16} />
+                <span>{error}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Table */}
+          {loading ? (
+            <div style={{ overflowX: "auto" }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th><th>Action</th><th>Performed By</th>
+                    <th>Target</th><th>Result</th><th>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i}>
+                      {[100,140,80,120,60,40].map((w, j) => (
+                        <td key={j}><div className="skeleton" style={{ height: 12, width: w }} /></td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : logs.length === 0 ? (
+            <div className="al-empty">
+              <p style={{ fontWeight: 500, marginBottom: "0.25rem" }}>No audit logs found</p>
+              <p style={{ fontSize: "0.8125rem" }}>Try adjusting your filters.</p>
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Timestamp</th>
+                    <th scope="col">Action</th>
+                    <th scope="col">Performed By</th>
+                    <th scope="col">Target</th>
+                    <th scope="col">Result</th>
+                    <th scope="col">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((log) => {
+                    const isExpanded = expandedId === log._id;
+                    return (
+                      <tr key={log._id}>
+                        <td style={{ whiteSpace: "nowrap", fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+                          {formatTimestamp(log.createdAt)}
+                        </td>
+                        <td style={{ fontWeight: 500, fontSize: "0.875rem" }}>{getActionLabel(log.action)}</td>
+                        <td style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>{log.performedBy}</td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.25rem" }}>
+                            <span className="al-target-badge">{log.targetType}</span>
+                            <span className="font-mono" style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{log.targetId}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`badge ${log.result === "success" ? "badge-success" : "badge-danger"}`}>
+                            {log.result === "success" ? <IconCheck size={10} /> : <IconAlertTriangle size={10} />}
+                            {log.result}
+                          </span>
+                        </td>
+                        <td>
+                          {log.errorMessage ? (
+                            <span style={{ color: "var(--danger-text)", fontSize: "0.8125rem" }}>
+                              {log.errorMessage}
+                            </span>
+                          ) : (
+                            <div>
+                              <button
+                                className="al-expand-btn"
+                                onClick={() => setExpandedId(isExpanded ? null : log._id)}
+                                aria-expanded={isExpanded}
+                              >
+                                {isExpanded ? "Hide" : "View"}
+                              </button>
+                              {isExpanded && (
+                                <pre className="al-detail-pre">
+                                  {JSON.stringify(log.details, null, 2)}
+                                </pre>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Pagination */}
-          <div style={paginationStyle} role="navigation" aria-label="Audit log pagination">
-            <button
-              onClick={() => fetchLogs(page - 1)}
-              disabled={page === 1}
-              aria-label="Previous page"
-              style={{
-                ...pageBtnStyle,
-                opacity: page === 1 ? 0.5 : 1,
-                cursor: page === 1 ? "not-allowed" : "pointer",
-              }}
-            >
-              Previous
-            </button>
-            <span style={{ fontSize: "0.9rem", color: "var(--muted)" }} aria-live="polite">
-              Page {page} of {pages} &mdash; {total.toLocaleString()} total entries
-            </span>
-            <button
-              onClick={() => fetchLogs(page + 1)}
-              disabled={page === pages}
-              aria-label="Next page"
-              style={{
-                ...pageBtnStyle,
-                opacity: page === pages ? 0.5 : 1,
-                cursor: page === pages ? "not-allowed" : "pointer",
-              }}
-            >
-              Next
-            </button>
-          </div>
-        </>
-      )}
-    </div>
+          {!loading && pages > 1 && (
+            <div style={{ padding: "0.875rem 1.5rem", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span className="pagination-info" aria-live="polite">
+                Page {page} of {pages} — {total.toLocaleString()} entries
+              </span>
+              <nav className="pagination-controls" aria-label="Audit log pagination">
+                <button
+                  className="page-btn"
+                  onClick={() => fetchLogs(page - 1)}
+                  disabled={page === 1}
+                  aria-label="Previous page"
+                  style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+                >
+                  <IconChevronLeft size={15} /> Prev
+                </button>
+                <button
+                  className="page-btn"
+                  onClick={() => fetchLogs(page + 1)}
+                  disabled={page === pages}
+                  aria-label="Next page"
+                  style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+                >
+                  Next <IconChevronRight size={15} />
+                </button>
+              </nav>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
-
-const containerStyle = {
-  maxWidth: "1400px",
-  margin: "0 auto",
-  padding: "2rem",
-};
-
-const titleStyle = {
-  fontSize: "2rem",
-  fontWeight: 700,
-  marginBottom: "1.5rem",
-  color: "var(--text)",
-};
-
-const filtersStyle = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-  gap: "1rem",
-  marginBottom: "1.5rem",
-  padding: "1.5rem",
-  background: "var(--card-bg)",
-  border: "1px solid var(--border)",
-  borderRadius: 10,
-};
-
-const filterGroupStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "0.5rem",
-};
-
-const labelStyle = {
-  fontSize: "0.85rem",
-  fontWeight: 600,
-  color: "var(--muted)",
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-};
-
-const selectStyle = {
-  padding: "0.6rem",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  fontSize: "0.9rem",
-  background: "var(--bg)",
-  color: "var(--text)",
-};
-
-const inputStyle = {
-  padding: "0.6rem",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  fontSize: "0.9rem",
-  background: "var(--bg)",
-  color: "var(--text)",
-};
-
-const tableContainerStyle = {
-  overflowX: "auto",
-  background: "var(--card-bg)",
-  border: "1px solid var(--border)",
-  borderRadius: 10,
-  padding: "1rem",
-};
-
-const tableStyle = {
-  width: "100%",
-  borderCollapse: "collapse",
-  fontSize: "0.9rem",
-};
-
-const thStyle = {
-  textAlign: "left",
-  padding: "0.75rem",
-  borderBottom: "2px solid var(--border)",
-  color: "var(--muted)",
-  fontWeight: 600,
-  fontSize: "0.85rem",
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-};
-
-const tdStyle = {
-  padding: "0.75rem",
-  borderBottom: "1px solid var(--border)",
-  color: "var(--text)",
-};
-
-const trStyle = {
-  transition: "background 0.2s",
-};
-
-const targetBadgeStyle = {
-  display: "inline-block",
-  padding: "0.2rem 0.5rem",
-  background: "rgba(126,200,227,0.15)",
-  color: "var(--accent)",
-  borderRadius: 4,
-  fontSize: "0.75rem",
-  fontWeight: 600,
-  textTransform: "uppercase",
-};
-
-const resultBadgeStyle = {
-  display: "inline-block",
-  padding: "0.2rem 0.6rem",
-  borderRadius: 4,
-  fontSize: "0.75rem",
-  fontWeight: 600,
-  textTransform: "capitalize",
-};
-
-const preStyle = {
-  marginTop: "0.5rem",
-  padding: "0.5rem",
-  background: "var(--border)",
-  borderRadius: 4,
-  fontSize: "0.75rem",
-  overflow: "auto",
-  maxHeight: "200px",
-};
-
-const paginationStyle = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  marginTop: "1.5rem",
-  padding: "1rem",
-  background: "var(--card-bg)",
-  border: "1px solid var(--border)",
-  borderRadius: 10,
-};
-
-const pageBtnStyle = {
-  padding: "0.6rem 1.2rem",
-  fontSize: "0.9rem",
-  background: "var(--primary)",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-  transition: "background 0.2s",
-};

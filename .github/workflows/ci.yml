@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+      # Tests mock Mongoose — a standalone instance is sufficient for unit tests.
+      # Integration tests that require a replica set are guarded by RUN_INTEGRATION_TESTS.
       MONGO_URI: mongodb://localhost:27017/stellaredupay_test
 
     services:
@@ -31,15 +33,15 @@ jobs:
         with:
           node-version-file: '.nvmrc'
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: |
             backend/node_modules
             frontend/node_modules
             node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
+          restore-keys:
+            - ${{ runner.os }}-node-
 
       - run: npm ci
 

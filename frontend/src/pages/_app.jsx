@@ -1,12 +1,23 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { useRouter } from "next/router";
 import "../styles/globals.css";
 import Navbar from "../components/Navbar";
+import AppLayout from "../components/AppLayout";
 import ErrorBoundary from "../components/ErrorBoundary";
 
 export const ThemeContext = createContext({ dark: false, toggle: () => {} });
 export const useTheme = () => useContext(ThemeContext);
 
+const APP_LAYOUT_ROUTES = [
+  "/dashboard",
+  "/reports",
+  "/fee-adjustments",
+  "/audit-logs",
+  "/disputes",
+];
+
 export default function MyApp({ Component, pageProps }) {
+  const { pathname } = useRouter();
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
@@ -16,7 +27,6 @@ export default function MyApp({ Component, pageProps }) {
     } else if (saved === "light") {
       setDark(false);
     } else {
-      // No saved preference — follow system
       setDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
     }
   }, []);
@@ -27,11 +37,19 @@ export default function MyApp({ Component, pageProps }) {
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
 
+  const useAppLayout = APP_LAYOUT_ROUTES.includes(pathname);
+
   return (
     <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d) }}>
       <Navbar />
       <ErrorBoundary>
-        <Component {...pageProps} />
+        {useAppLayout ? (
+          <AppLayout>
+            <Component {...pageProps} />
+          </AppLayout>
+        ) : (
+          <Component {...pageProps} />
+        )}
       </ErrorBoundary>
     </ThemeContext.Provider>
   );

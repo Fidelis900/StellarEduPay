@@ -1,172 +1,253 @@
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/router';
-import TestnetBanner from './TestnetBanner';
-import { useTheme } from '../pages/_app';
-import { useAdminAuth } from '../hooks/useAdminAuth';
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { useRouter } from "next/router";
+import TestnetBanner from "./TestnetBanner";
+import { useTheme } from "../pages/_app";
+import { useAdminAuth } from "../hooks/useAdminAuth";
 
 const PUBLIC_LINKS = [
-  { href: "/", label: "Home" },
-  { href: "/pay-fees", label: "Pay Fees" },
+  { href: "/pay-fees",  label: "Pay Fees" },
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/reports", label: "Reports" },
+  { href: "/reports",   label: "Reports" },
 ];
 
 const ADMIN_LINKS = [
   { href: "/fee-adjustments", label: "Fee Rules" },
-  { href: "/audit-logs", label: "Audit Logs" },
-  { href: "/disputes", label: "Disputes" },
+  { href: "/audit-logs",      label: "Audit Logs" },
+  { href: "/disputes",        label: "Disputes" },
 ];
+
+const SunIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="5"/>
+    <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+    <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+  </svg>
+);
+
+const MoonIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+  </svg>
+);
 
 export default function Navbar() {
   const { pathname } = useRouter();
   const [open, setOpen] = useState(false);
   const { dark, toggle } = useTheme();
   const { isAdmin, logout } = useAdminAuth();
+  const links = isAdmin ? [...PUBLIC_LINKS, ...ADMIN_LINKS] : PUBLIC_LINKS;
 
-  const allLinks = isAdmin ? [...PUBLIC_LINKS, ...ADMIN_LINKS] : PUBLIC_LINKS;
-
-  // Close the mobile menu on every route change, including browser back/forward.
   useEffect(() => { setOpen(false); }, [pathname]);
 
   return (
     <>
       <style>{`
-        nav .nav-link { color: rgba(255,255,255,0.75); text-decoration: none; font-size: 0.9rem; padding: 0.25rem 0; white-space: nowrap; transition: color 0.15s; }
-        nav .nav-link:hover { color: #fff; }
-        nav .nav-link.active { color: #fff; font-weight: 600; border-bottom: 2px solid #7ec8e3; }
-        .nav-links .nav-link, .nav-mobile .nav-link { color: rgba(255,255,255,0.75); text-decoration: none; }
-        .nav-links .nav-link:hover, .nav-links .nav-link.active,
-        .nav-mobile .nav-link:hover, .nav-mobile .nav-link.active { color: #fff; }
-        .nav-links { display: flex; gap: 1.75rem; }
-        @media (max-width: 600px) {
-          .nav-links { display: none; flex-direction: column; gap: 0.75rem; padding: 1rem 2rem; background: #1a1a2e; }
-          .nav-links.open { display: flex; }
-          .hamburger { display: flex !important; }
+        .nav {
+          background: #131830;
+          background-image: radial-gradient(600px 120px at 18% 0%, rgba(99,102,241,0.18), transparent 70%);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+          position: sticky;
+          top: 0;
+          z-index: 200;
+          backdrop-filter: saturate(140%);
         }
-        .nav-mobile { display: none; }
-        @media (max-width: 600px) {
-          .nav-mobile { display: none; flex-direction: column; gap: 0.75rem; padding: 1rem 2rem; background: #1a1a2e; }
-          .nav-mobile.open { display: flex; }
+        .nav-inner {
+          max-width: 1280px;
+          margin: 0 auto;
+          padding: 0 1.5rem;
+          height: 60px;
+          display: flex;
+          align-items: center;
+          gap: 1.5rem;
+        }
+        .nav-brand {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          text-decoration: none;
+          flex-shrink: 0;
+          margin-right: 0.5rem;
+        }
+        .nav-logo {
+          width: 32px; height: 32px;
+          background: linear-gradient(135deg, #22d3ee 0%, #6366f1 50%, #8b5cf6 100%);
+          border-radius: 9px;
+          display: flex; align-items: center; justify-content: center;
+          font-weight: 900; font-size: 0.85rem; color: #fff;
+          flex-shrink: 0;
+          letter-spacing: -0.05em;
+          box-shadow: 0 4px 14px -2px rgba(99,102,241,0.6);
+        }
+        .nav-name {
+          color: #f1f5f9;
+          font-weight: 700;
+          font-size: 0.9375rem;
+          letter-spacing: -0.02em;
+          white-space: nowrap;
+        }
+        .nav-links {
+          display: flex;
+          align-items: center;
+          gap: 0.125rem;
+          flex: 1;
+        }
+        .nav-link {
+          color: rgba(255, 255, 255, 0.5);
+          text-decoration: none;
+          font-size: 0.8375rem;
+          font-weight: 500;
+          padding: 0.375rem 0.7rem;
+          border-radius: 6px;
+          transition: color 0.12s, background 0.12s;
+          white-space: nowrap;
+        }
+        .nav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+        .nav-link.active { color: #fff; background: rgba(255, 255, 255, 0.1); font-weight: 600; }
+        .nav-right { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+        .nav-theme-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px; height: 32px;
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          color: rgba(255, 255, 255, 0.6);
+          cursor: pointer;
+          transition: background 0.12s, border-color 0.12s, color 0.12s;
+        }
+        .nav-theme-btn:hover {
+          background: rgba(255, 255, 255, 0.12);
+          border-color: rgba(255, 255, 255, 0.2);
+          color: #fff;
+        }
+        .nav-pill {
+          display: inline-flex; align-items: center;
+          background: transparent;
+          border: 1.5px solid rgba(255, 255, 255, 0.14);
+          border-radius: 7px;
+          color: rgba(255, 255, 255, 0.65);
+          cursor: pointer;
+          font: 500 0.8rem/1 inherit;
+          padding: 0.375rem 0.875rem;
+          transition: all 0.12s;
+          text-decoration: none;
+          white-space: nowrap;
+        }
+        .nav-pill:hover {
+          border-color: rgba(255, 255, 255, 0.3);
+          color: #fff;
+          background: rgba(255, 255, 255, 0.06);
+        }
+        .nav-pill-accent {
+          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+          border: none;
+          color: #fff;
+          font-weight: 700;
+          box-shadow: 0 4px 14px -3px rgba(99,102,241,0.6);
+        }
+        .nav-pill-accent:hover {
+          filter: brightness(1.1);
+          color: #fff;
+          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        }
+        .nav-hamburger {
+          display: none;
+          align-items: center;
+          justify-content: center;
+          width: 32px; height: 32px;
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 7px;
+          cursor: pointer;
+          color: rgba(255, 255, 255, 0.7);
+          font-size: 1.1rem;
+          line-height: 1;
+        }
+        .nav-mobile {
+          display: none;
+          flex-direction: column;
+          background: #0c1525;
+          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          padding: 0.5rem 1rem 1rem;
+          gap: 0.125rem;
+        }
+        .nav-mobile.open { display: flex; }
+        .nav-mobile-divider {
+          height: 1px;
+          background: rgba(255,255,255,0.07);
+          margin: 0.5rem 0;
+        }
+        @media (max-width: 720px) {
+          .nav-links { display: none; }
+          .nav-hamburger { display: flex; }
         }
       `}</style>
 
       <TestnetBanner />
+      <nav className="nav" aria-label="Main navigation">
+        <div className="nav-inner">
+          <Link href="/" className="nav-brand">
+            <div className="nav-logo">S</div>
+            <span className="nav-name">StellarEduPay</span>
+          </Link>
 
-      <nav style={{ background: '#1a1a2e', padding: '0.75rem 2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        {/* Brand */}
-        <Link href="/" style={{ textDecoration: "none" }}>
-          <span style={{ color: "#fff", fontWeight: 700, fontSize: "1rem", letterSpacing: "0.02em" }}>
-            StellarEduPay
-          </span>
-        </Link>
+          <div className="nav-links">
+            {links.map(({ href, label }) => (
+              <Link
+                key={href}
+                href={href}
+                className={`nav-link${pathname === href ? " active" : ""}`}
+                aria-current={pathname === href ? "page" : undefined}
+              >
+                {label}
+              </Link>
+            ))}
+          </div>
 
-        {/* Desktop links */}
-        <div className="nav-links" style={{ display: "flex", gap: "1.75rem" }}>
-          {allLinks.map(({ href, label }) => (
-            <Link
-              key={href}
-              href={href}
-              className={`nav-link${pathname === href ? " active" : ""}`}
-              aria-current={pathname === href ? "page" : undefined}
-            >
-              {label}
-            </Link>
-          ))}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          {/* Dark mode toggle */}
-          <button
-            onClick={toggle}
-            aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
-            style={{
-              background: dark ? "#7ec8e3" : "rgba(255,255,255,0.15)",
-              border: "none",
-              borderRadius: "20px",
-              cursor: "pointer",
-              color: "#fff",
-              fontSize: "0.75rem",
-              fontWeight: 600,
-              letterSpacing: "0.05em",
-              padding: "0.3rem 0.75rem",
-              transition: "background 0.2s",
-            }}
-          >
-            {dark ? "LIGHT" : "DARK"}
-          </button>
-
-          {/* Admin login / logout */}
-          {isAdmin ? (
+          <div className="nav-right">
             <button
-              onClick={logout}
-              style={{
-                background: "rgba(255,255,255,0.15)",
-                border: "none",
-                borderRadius: "20px",
-                cursor: "pointer",
-                color: "#fff",
-                fontSize: "0.75rem",
-                fontWeight: 600,
-                letterSpacing: "0.05em",
-                padding: "0.3rem 0.75rem",
-              }}
+              className="nav-theme-btn"
+              onClick={toggle}
+              aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
             >
-              LOGOUT
+              {dark ? <SunIcon /> : <MoonIcon />}
             </button>
-          ) : (
-            <Link
-              href="/login"
-              style={{
-                background: "rgba(255,255,255,0.15)",
-                borderRadius: "20px",
-                color: "#fff",
-                fontSize: "0.75rem",
-                fontWeight: 600,
-                letterSpacing: "0.05em",
-                padding: "0.3rem 0.75rem",
-                textDecoration: "none",
-              }}
+            {isAdmin
+              ? <button className="nav-pill" onClick={logout}>Sign out</button>
+              : <Link href="/login" className="nav-pill nav-pill-accent">Admin Login</Link>
+            }
+            <button
+              className="nav-hamburger"
+              onClick={() => setOpen(o => !o)}
+              aria-expanded={open}
+              aria-label={open ? "Close menu" : "Open menu"}
             >
-              ADMIN
-            </Link>
-          )}
-
-          {/* Hamburger (hidden on desktop via media query) */}
-          <button
-            className="hamburger"
-            onClick={() => setOpen((o) => !o)}
-            aria-label={open ? "Close menu" : "Open menu"}
-            aria-expanded={open}
-            style={{
-              display: "none",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              color: "#fff",
-              fontSize: "1.4rem",
-              lineHeight: 1,
-              padding: 0,
-            }}
-          >
-            {open ? "✕" : "☰"}
-          </button>
+              {open ? "✕" : "☰"}
+            </button>
+          </div>
         </div>
       </nav>
 
-      {/* Mobile dropdown */}
-      <div className={`nav-mobile${open ? " open" : ""}`}>
-        {allLinks.map(({ href, label }) => (
+      <div className={`nav-mobile${open ? " open" : ""}`} aria-hidden={!open}>
+        {links.map(({ href, label }) => (
           <Link
             key={href}
             href={href}
             className={`nav-link${pathname === href ? " active" : ""}`}
-            aria-current={pathname === href ? "page" : undefined}
             onClick={() => setOpen(false)}
           >
             {label}
           </Link>
         ))}
+        <div className="nav-mobile-divider" />
+        {isAdmin
+          ? <button className="nav-pill" onClick={() => { logout(); setOpen(false); }} style={{ marginTop: "0.25rem", width: "fit-content" }}>Sign out</button>
+          : <Link href="/login" className="nav-pill nav-pill-accent" style={{ marginTop: "0.25rem", width: "fit-content" }} onClick={() => setOpen(false)}>Admin Login</Link>
+        }
       </div>
     </>
   );

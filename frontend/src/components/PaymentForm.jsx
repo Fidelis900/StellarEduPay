@@ -4,27 +4,60 @@ import { generateStellarPaymentUri } from "../utils/stellarUri";
 import { getStudent, getPaymentInstructions, getStudentPayments, getStudentBalance } from "../services/api";
 import DisputeForm from "./DisputeForm";
 import { getErrorMessage } from "../utils/errorMessages";
+import { IconCopy, IconCheck, IconAlertTriangle, IconSearch } from "./Icons";
 
-const STATUS_STYLE = {
-  valid:     { color: "#166534", bg: "#dcfce7" },
-  overpaid:  { color: "#854d0e", bg: "#fef9c3" },
-  underpaid: { color: "#991b1b", bg: "#fee2e2" },
-  unknown:   { color: "#475569", bg: "#f1f5f9" },
+const STATUS_BADGE = {
+  valid:     { cls: "badge badge-success", label: "Valid" },
+  overpaid:  { cls: "badge badge-warning", label: "Overpaid" },
+  underpaid: { cls: "badge badge-danger",  label: "Underpaid" },
+  unknown:   { cls: "badge badge-neutral", label: "Unknown" },
 };
 
+function CopyButton({ text, copyKey, copied, onCopy }) {
+  const isCopied = copied === copyKey;
+  return (
+    <button
+      onClick={() => onCopy(text, copyKey)}
+      className="btn btn-sm btn-ghost"
+      aria-label={isCopied ? "Copied" : "Copy to clipboard"}
+      style={{ flexShrink: 0, gap: "0.3rem" }}
+    >
+      {isCopied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+      {isCopied ? "Copied!" : "Copy"}
+    </button>
+  );
+}
+
+function InfoRow({ label, children }) {
+  return (
+    <div style={{
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      padding: "0.625rem 0",
+      borderBottom: "1px solid var(--border)",
+      gap: "0.5rem",
+      flexWrap: "wrap",
+    }}>
+      <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", flexShrink: 0 }}>{label}</span>
+      <div style={{ fontWeight: 600, textAlign: "right" }}>{children}</div>
+    </div>
+  );
+}
+
 export default function PaymentForm() {
-  const [studentId, setStudentId]     = useState("");
-  const [student, setStudent]         = useState(null);
-  const [instructions, setInstructions] = useState(null);
-  const [payments, setPayments]       = useState(null);
+  const [studentId, setStudentId]             = useState("");
+  const [student, setStudent]                 = useState(null);
+  const [instructions, setInstructions]       = useState(null);
+  const [payments, setPayments]               = useState(null);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
-  const [error, setError]             = useState("");
-  const [loading, setLoading]         = useState(false);
-  const [copied, setCopied]           = useState(null);
+  const [error, setError]                     = useState("");
+  const [loading, setLoading]                 = useState(false);
+  const [copied, setCopied]                   = useState(null);
   const [hasDeletedPayments, setHasDeletedPayments] = useState(false);
-  const [disputingTx, setDisputingTx] = useState(null); // txHash currently being disputed
-  const [disputedTxs, setDisputedTxs] = useState(new Set()); // txHashes with open disputes
-  const errorRef = useRef(null);
+  const [disputingTx, setDisputingTx]         = useState(null);
+  const [disputedTxs, setDisputedTxs]         = useState(new Set());
+  const errorRef  = useRef(null);
   const debounceRef = useRef(null);
 
   function handleStudentIdChange(e) {
@@ -34,14 +67,16 @@ export default function PaymentForm() {
   }
 
   useEffect(() => {
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, []);
 
   const lookupStudent = useCallback(async (id) => {
     if (!id.trim()) return;
-    setError(""); setStudent(null); setInstructions(null); setPayments(null); setHasDeletedPayments(false);
+    setError("");
+    setStudent(null);
+    setInstructions(null);
+    setPayments(null);
+    setHasDeletedPayments(false);
     setLoading(true);
     setPaymentsLoading(true);
     try {
@@ -56,7 +91,10 @@ export default function PaymentForm() {
       setPayments(payRes.data?.payments ?? payRes.data ?? []);
       setHasDeletedPayments(balRes?.data?.hasDeletedPayments === true);
     } catch (err) {
-      setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || "Student not found. Please check the ID and try again.");
+      setError(
+        getErrorMessage(err.response?.data?.code, err.response?.data?.error) ||
+        "Student not found. Please check the ID and try again."
+      );
       errorRef.current?.focus();
     } finally {
       setLoading(false);
@@ -74,216 +112,264 @@ export default function PaymentForm() {
 
   return (
     <>
-      <style>{`
-        .pf-wrap { padding: 2rem 0; }
-        .pf-card { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 1.75rem; margin-top: 1.5rem; }
-        .pf-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 0.4rem; display: block; }
-        .pf-field { display: flex; gap: 0.5rem; align-items: center; }
-        .pf-code { flex: 1; background: var(--border); border-radius: 6px; padding: 0.6rem 0.75rem; font-family: monospace; font-size: 0.85rem; word-break: break-all; color: var(--text); }
-        .pf-copy { padding: 0.5rem 0.9rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; font-size: 0.8rem; white-space: nowrap; transition: background 0.15s; }
-        .pf-copy:hover { background: var(--border); }
-        .pf-input { width: 100%; padding: 0.65rem 0.85rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.95rem; background: var(--bg); color: var(--text); outline: none; margin-bottom: 0.75rem; }
-        .pf-input:focus { border-color: var(--accent); }
-        .pf-row { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
-        .pf-row:last-child { border-bottom: none; }
-        .pf-row-label { color: var(--muted); }
-        .pf-hist-item { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem; font-size: 0.875rem; }
-        .pf-skeleton { height: 1rem; background: var(--border); border-radius: 4px; animation: pf-pulse 1.5s infinite; }
-        @keyframes pf-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-      `}</style>
+      <style dangerouslySetInnerHTML={{ __html: `
+        .pf-section-label {
+          font-size: 0.68rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.09em;
+          color: var(--text-muted);
+          margin-bottom: 0.35rem;
+          display: block;
+        }
+        .pf-code-row {
+          display: flex;
+          gap: 0.5rem;
+          align-items: center;
+        }
+        .pf-code {
+          flex: 1;
+          background: var(--bg-subtle, var(--bg));
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          padding: 0.5rem 0.75rem;
+          font-family: 'SF Mono', 'Fira Code', monospace;
+          font-size: 0.8rem;
+          word-break: break-all;
+          color: var(--text);
+          min-width: 0;
+        }
+        .pf-payment-item {
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          padding: 1rem;
+          margin-bottom: 0.625rem;
+          background: var(--card-bg);
+          transition: border-color 0.15s;
+        }
+        .pf-payment-item:hover { border-color: var(--border-strong); }
+        .pf-search-icon {
+          position: absolute;
+          left: 0.7rem;
+          top: 50%;
+          transform: translateY(-50%);
+          color: var(--text-muted);
+          pointer-events: none;
+          display: flex;
+        }
+        .pf-id-input-wrap {
+          position: relative;
+          margin-bottom: 0.875rem;
+        }
+        .pf-id-input-wrap input {
+          padding-left: 2.25rem;
+        }
+      `}} />
 
-      <div className="pf-wrap">
-        <h2 style={{ marginBottom: "0.25rem" }}>Pay School Fees</h2>
-        <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginBottom: "1.5rem" }}>
-          Enter your student ID to get payment instructions.
-        </p>
+      <div className="card pf-wrap">
+        <div className="card-header">
+          <div className="card-title">Pay School Fees</div>
+          {isTestnet && (
+            <span className="badge badge-warning" style={{ fontSize: "0.68rem" }}>Testnet</span>
+          )}
+        </div>
+        <div className="card-body">
+          <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "1.25rem" }}>
+            Enter your student ID to get payment instructions.
+          </p>
 
-        <form onSubmit={(e) => { e.preventDefault(); lookupStudent(studentId); }}>
-          <label htmlFor="sid" className="pf-label">Student ID</label>
-          <input
-            id="sid" type="text" placeholder="e.g. STU001"
-            value={studentId}
-            onChange={(e) => {
-              handleStudentIdChange(e);
-              const val = e.target.value;
-              debounceRef.current = setTimeout(() => lookupStudent(val), 400);
-            }}
-            required className="pf-input"
-          />
-          <button type="submit" disabled={loading} className="btn-primary" style={{ width: "100%" }}>
-            {loading ? "Loading…" : "Get Payment Instructions"}
-          </button>
-        </form>
-
-        {error && (
-          <div ref={errorRef} role="alert" tabIndex="-1"
-            style={{ marginTop: "1rem", padding: "0.75rem 1rem", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, color: "#991b1b", fontSize: "0.875rem" }}>
-            {error}
-          </div>
-        )}
-
-        {student && instructions && (
-          <div className="pf-card">
-            {isTestnet && (
-              <div style={{ background: "#fef9c3", border: "1px solid #fde68a", borderRadius: 6, padding: "0.6rem 0.9rem", fontSize: "0.8rem", color: "#854d0e", marginBottom: "1.25rem" }}>
-                ⚠️ Testnet mode — do not send real funds.
-              </div>
-            )}
-
-            {hasDeletedPayments && (
-              <div
-                role="alert"
-                title="This student has deleted payment records that are not included in this balance."
-                style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, padding: "0.6rem 0.9rem", fontSize: "0.8rem", color: "#9a3412", marginBottom: "1.25rem", cursor: "help" }}
-              >
-                ⚠️ This student has deleted payment records that are not included in the balance shown below.
-              </div>
-            )}
-
-            <div className="pf-row"><span className="pf-row-label">Student</span><strong>{student.name}</strong></div>
-            <div className="pf-row"><span className="pf-row-label">Class</span><span>{student.class}</span></div>
-            <div className="pf-row"><span className="pf-row-label">Fee</span><strong>{instructions.feeAmount ?? student.feeAmount} XLM</strong></div>
-            <div className="pf-row" style={{ marginBottom: "1.25rem" }}>
-              <span className="pf-row-label">Status</span>
-              <span style={{ fontWeight: 600, color: student.feePaid ? "#166534" : "#991b1b" }}>
-                {student.feePaid ? "Paid" : "Unpaid"}
-              </span>
+          <form onSubmit={(e) => { e.preventDefault(); lookupStudent(studentId); }}>
+            <label className="pf-section-label" htmlFor="sid">Student ID</label>
+            <div className="pf-id-input-wrap">
+              <span className="pf-search-icon"><IconSearch size={15} /></span>
+              <input
+                id="sid"
+                type="text"
+                placeholder="e.g. STU001"
+                value={studentId}
+                onChange={(e) => {
+                  handleStudentIdChange(e);
+                  const val = e.target.value;
+                  if (debounceRef.current) clearTimeout(debounceRef.current);
+                  debounceRef.current = setTimeout(() => lookupStudent(val), 420);
+                }}
+                required
+                className="form-input"
+              />
             </div>
+            <button type="submit" disabled={loading} className="btn btn-dark" style={{ width: "100%" }}>
+              {loading ? "Looking up…" : "Get Payment Instructions"}
+            </button>
+          </form>
 
-            <div style={{ marginBottom: "1rem" }}>
-              <span className="pf-label">Wallet Address</span>
-              <div className="pf-field">
-                <span className="pf-code">{instructions.walletAddress}</span>
-                <button className="pf-copy" onClick={() => copy(instructions.walletAddress, "wallet")}>
-                  {copied === "wallet" ? "Copied!" : "Copy"}
-                </button>
-              </div>
+          {error && (
+            <div ref={errorRef} role="alert" tabIndex="-1" className="alert alert-danger" style={{ marginTop: "1rem" }}>
+              <IconAlertTriangle size={15} />
+              <span>{error}</span>
             </div>
+          )}
 
-            <div>
-              <span className="pf-label">Memo (required)</span>
-              <div className="pf-field">
-                <span className="pf-code">{instructions.memo}</span>
-                <button className="pf-copy" onClick={() => copy(instructions.memo, "memo")}>
-                  {copied === "memo" ? "Copied!" : "Copy"}
-                </button>
-              </div>
-            </div>
-
-            {/* QR code for mobile wallet scanning (SEP-0007 URI) */}
-            {instructions.walletAddress && instructions.memo && (() => {
-              // Pick the first non-XLM asset from acceptedAssets so the QR URI
-              // includes asset_code and asset_issuer for USDC payments.
-              // If only XLM is accepted, assetCode stays undefined (defaults to XLM).
-              const nonNative = instructions.acceptedAssets?.find(
-                a => a.code !== 'XLM' && a.type !== 'native'
-              );
-              return (
-                <div style={{ marginTop: "1.25rem", textAlign: "center" }}>
-                  <span className="pf-label" style={{ display: "block", marginBottom: "0.6rem" }}>Scan with Stellar Wallet</span>
-                  <QRCodeSVG
-                    value={generateStellarPaymentUri({
-                      destination: instructions.walletAddress,
-                      amount: instructions.feeAmount ?? student.feeAmount ?? 0,
-                      memo: instructions.memo,
-                      assetCode: nonNative?.code,
-                      assetIssuer: nonNative?.issuer,
-                    })}
-                    size={160}
-                    role="img"
-                    aria-label={`QR code for Stellar payment address: ${instructions.walletAddress}`}
-                  />
-                  <p style={{ marginTop: "0.75rem", fontSize: "0.8rem", color: "var(--muted)" }}>
-                    If you cannot scan the QR code, use the address and memo below:
-                  </p>
-                  <div style={{ textAlign: "left", marginTop: "0.5rem" }}>
-                    <div style={{ marginBottom: "0.4rem" }}>
-                      <span style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Address</span>
-                      <p style={{ fontFamily: "monospace", fontSize: "0.82rem", wordBreak: "break-all", userSelect: "text", margin: "0.2rem 0 0" }}>
-                        {instructions.walletAddress}
-                      </p>
-                    </div>
-                    <div>
-                      <span style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Memo</span>
-                      <p style={{ fontFamily: "monospace", fontSize: "0.82rem", userSelect: "text", margin: "0.2rem 0 0" }}>
-                        {instructions.memo}
-                      </p>
-                    </div>
-                  </div>
+          {student && instructions && (
+            <div style={{ marginTop: "1.25rem" }}>
+              {isTestnet && (
+                <div className="alert alert-warning" style={{ marginBottom: "1rem", fontSize: "0.8125rem" }}>
+                  <IconAlertTriangle size={14} />
+                  Testnet mode — do not send real funds.
                 </div>
-              );
-            })()}
-
-            {instructions.acceptedAssets?.length > 0 && (
-              <p style={{ marginTop: "1rem", fontSize: "0.8rem", color: "var(--muted)" }}>
-                Accepted: {instructions.acceptedAssets.map(a => a.displayName).join(", ")}
-              </p>
-            )}
-          </div>
-        )}
-
-        {(payments !== null || paymentsLoading) && (
-          <div style={{ marginTop: "2rem" }} aria-busy={paymentsLoading}>
-            <h3 style={{ marginBottom: "1rem", fontSize: "1rem" }}>Payment History</h3>
-            {paymentsLoading ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="pf-hist-item">
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.6rem" }}>
-                    <div className="pf-skeleton" style={{ width: "80px" }} />
-                    <div className="pf-skeleton" style={{ width: "55px" }} />
-                  </div>
-                  <div className="pf-skeleton" style={{ width: "100%" }} />
+              )}
+              {hasDeletedPayments && (
+                <div role="alert" className="alert alert-warning" style={{ marginBottom: "1rem", fontSize: "0.8125rem" }}>
+                  <IconAlertTriangle size={14} />
+                  This student has deleted payment records not included in the balance shown.
                 </div>
-              ))
-            ) : payments.length === 0 ? (
-              <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>No payments recorded yet.</p>
-            ) : payments.map((p, i) => {
-              const st = p.feeValidationStatus || "unknown";
-              const badge = STATUS_STYLE[st] || STATUS_STYLE.unknown;
-              const canDispute = st === "valid" || st === "overpaid";
-              const alreadyDisputed = disputedTxs.has(p.txHash);
-              return (
-                <div key={p.txHash || i} className="pf-hist-item">
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.4rem" }}>
-                    <strong>{p.amount} {p.assetCode || "XLM"}</strong>
-                    <span style={{ ...badge, padding: "0.15rem 0.6rem", borderRadius: 20, fontSize: "0.75rem", fontWeight: 600 }}>{st}</span>
-                  </div>
-                  <div style={{ color: "var(--muted)", fontSize: "0.8rem", fontFamily: "monospace" }}>{p.txHash}</div>
-                  {p.confirmedAt && <div style={{ color: "var(--muted)", fontSize: "0.8rem", marginTop: "0.25rem" }}>{new Date(p.confirmedAt).toLocaleString()}</div>}
+              )}
 
-                  {canDispute && (
-                    alreadyDisputed ? (
-                      <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "#854d0e", background: "#fef9c3", padding: "0.25rem 0.6rem", borderRadius: 4, display: "inline-block" }}>
-                        Dispute submitted
+              {/* Student info */}
+              <InfoRow label="Student">{student.name}</InfoRow>
+              <InfoRow label="Class">{student.class}</InfoRow>
+              <InfoRow label="Fee">
+                {instructions.feeAmount ?? student.feeAmount}
+                <span style={{ marginLeft: "0.25rem", fontSize: "0.72rem", color: "var(--text-muted)", fontWeight: 600 }}>XLM</span>
+              </InfoRow>
+              <InfoRow label="Status">
+                <span className={student.feePaid ? "badge badge-success" : "badge badge-danger"}>
+                  {student.feePaid ? "Paid" : "Unpaid"}
+                </span>
+              </InfoRow>
+
+              {/* Wallet address */}
+              <div style={{ marginTop: "1.25rem", marginBottom: "0.875rem" }}>
+                <span className="pf-section-label">Wallet Address</span>
+                <div className="pf-code-row">
+                  <span className="pf-code">{instructions.walletAddress}</span>
+                  <CopyButton text={instructions.walletAddress} copyKey="wallet" copied={copied} onCopy={copy} />
+                </div>
+              </div>
+
+              {/* Memo */}
+              <div style={{ marginBottom: "1.25rem" }}>
+                <span className="pf-section-label">Memo (required)</span>
+                <div className="pf-code-row">
+                  <span className="pf-code">{instructions.memo}</span>
+                  <CopyButton text={instructions.memo} copyKey="memo" copied={copied} onCopy={copy} />
+                </div>
+              </div>
+
+              {/* QR Code */}
+              {instructions.walletAddress && instructions.memo && (() => {
+                const nonNative = instructions.acceptedAssets?.find(
+                  a => a.code !== "XLM" && a.type !== "native"
+                );
+                return (
+                  <div style={{ textAlign: "center", marginTop: "1.25rem", padding: "1.25rem", background: "var(--bg-subtle, var(--bg))", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+                    <span className="pf-section-label" style={{ display: "block", marginBottom: "0.75rem" }}>
+                      Scan with Stellar Wallet
+                    </span>
+                    <div style={{ display: "inline-flex", padding: "0.75rem", background: "#fff", borderRadius: "var(--radius-sm)" }}>
+                      <QRCodeSVG
+                        value={generateStellarPaymentUri({
+                          destination: instructions.walletAddress,
+                          amount: instructions.feeAmount ?? student.feeAmount ?? 0,
+                          memo: instructions.memo,
+                          assetCode: nonNative?.code,
+                          assetIssuer: nonNative?.issuer,
+                        })}
+                        size={148}
+                        role="img"
+                        aria-label={`QR code for payment to ${instructions.walletAddress}`}
+                      />
+                    </div>
+                    <p style={{ marginTop: "0.625rem", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                      Compatible with Lobstr, Solar, XBULL and any SEP-0007 wallet.
+                    </p>
+                  </div>
+                );
+              })()}
+
+              {instructions.acceptedAssets?.length > 0 && (
+                <p style={{ marginTop: "0.875rem", fontSize: "0.775rem", color: "var(--text-muted)" }}>
+                  Accepted assets: {instructions.acceptedAssets.map(a => a.displayName).join(", ")}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Payment History */}
+          {(payments !== null || paymentsLoading) && (
+            <div style={{ marginTop: "1.75rem" }}>
+              <div style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--text)", marginBottom: "0.875rem", paddingBottom: "0.625rem", borderBottom: "1px solid var(--border)" }}>
+                Payment History
+              </div>
+              {paymentsLoading ? (
+                Array.from({ length: 2 }).map((_, i) => (
+                  <div key={i} className="pf-payment-item">
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                      <div className="skeleton" style={{ height: 14, width: 80 }} />
+                      <div className="skeleton" style={{ height: 20, width: 60, borderRadius: 20 }} />
+                    </div>
+                    <div className="skeleton" style={{ height: 10, width: "100%" }} />
+                  </div>
+                ))
+              ) : payments.length === 0 ? (
+                <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>No payments recorded yet.</p>
+              ) : payments.map((p, i) => {
+                const st = p.feeValidationStatus || "unknown";
+                const badge = STATUS_BADGE[st] || STATUS_BADGE.unknown;
+                const canDispute = st === "valid" || st === "overpaid";
+                const alreadyDisputed = disputedTxs.has(p.txHash);
+                return (
+                  <div key={p.txHash || i} className="pf-payment-item">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.4rem" }}>
+                      <strong style={{ fontSize: "0.9rem" }}>
+                        {p.amount}{" "}
+                        <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--text-muted)" }}>
+                          {p.assetCode || "XLM"}
+                        </span>
+                      </strong>
+                      <span className={badge.cls}>{badge.label}</span>
+                    </div>
+                    <div style={{ fontFamily: "monospace", fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.25rem", wordBreak: "break-all" }}>
+                      {p.txHash}
+                    </div>
+                    {p.confirmedAt && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-subtle)" }}>
+                        {new Date(p.confirmedAt).toLocaleString()}
                       </div>
-                    ) : (
-                      disputingTx === p.txHash ? (
-                        <div style={{ marginTop: "0.75rem" }}>
-                          <DisputeForm
-                            txHash={p.txHash}
-                            studentId={studentId}
-                            onSuccess={(dispute) => {
-                              setDisputedTxs((prev) => new Set([...prev, p.txHash]));
-                              setDisputingTx(null);
-                            }}
-                            onCancel={() => setDisputingTx(null)}
-                          />
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setDisputingTx(p.txHash)}
-                          style={{ marginTop: "0.5rem", padding: "0.25rem 0.75rem", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)", cursor: "pointer", fontSize: "0.75rem" }}
-                        >
-                          Raise Dispute
-                        </button>
-                      )
-                    )
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+                    )}
+
+                    {canDispute && (
+                      <div style={{ marginTop: "0.625rem" }}>
+                        {alreadyDisputed ? (
+                          <span className="badge badge-warning">Dispute submitted</span>
+                        ) : disputingTx === p.txHash ? (
+                          <div style={{ marginTop: "0.5rem" }}>
+                            <DisputeForm
+                              txHash={p.txHash}
+                              studentId={studentId}
+                              onSuccess={() => {
+                                setDisputedTxs(prev => new Set([...prev, p.txHash]));
+                                setDisputingTx(null);
+                              }}
+                              onCancel={() => setDisputingTx(null)}
+                            />
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setDisputingTx(p.txHash)}
+                            className="btn btn-sm btn-ghost"
+                            style={{ marginTop: "0.25rem" }}
+                          >
+                            Raise Dispute
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </>
   );

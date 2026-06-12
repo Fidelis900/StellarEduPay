@@ -29,6 +29,7 @@ async function requireAdminAuth(req, res, next) {
 
   const authHeader = req.headers['authorization'];
   const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const cookieToken = req.cookies?.admin_token || null;
   const token = cookieToken || bearerToken;
 
   const handleAuthFailure = async (reason, code) => {
@@ -50,7 +51,7 @@ async function requireAdminAuth(req, res, next) {
         result: 'failure',
         errorMessage: reason,
         ipAddress: ip,
-        userAgent: req.get('user-agent'),
+        userAgent: req.headers?.['user-agent'],
     });
 
     const failKey = `fail_count:${ip}`;
@@ -65,8 +66,10 @@ async function requireAdminAuth(req, res, next) {
     return res.status(401).json({ error: reason, code });
   };
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return handleAuthFailure('Authentication required. Provide a Bearer token.', 'MISSING_AUTH_TOKEN');
+  // Accept either the HttpOnly admin_token cookie (browser flow) or a Bearer
+  // token (API clients). token = cookieToken || bearerToken (computed above).
+  if (!token) {
+    return handleAuthFailure('Authentication required. Provide an admin session cookie or Bearer token.', 'MISSING_AUTH_TOKEN');
   }
 
   try {

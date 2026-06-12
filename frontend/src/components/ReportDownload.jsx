@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { getReport } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
+import {
+  IconCalendar, IconDownload, IconBarChart, IconAlertTriangle,
+  IconCheck, IconTrendingUp,
+} from "./Icons";
+import PageHero, { StatCard } from "./PageHero";
 
 export default function ReportDownload() {
   const [startDate, setStartDate] = useState("");
@@ -19,7 +24,10 @@ export default function ReportDownload() {
       const { data } = await getReport(params);
       setReport(data);
     } catch (err) {
-      setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || "Failed to generate report.");
+      setError(
+        getErrorMessage(err.response?.data?.code, err.response?.data?.error) ||
+        "Failed to generate report."
+      );
     } finally {
       setLoading(false);
     }
@@ -29,27 +37,22 @@ export default function ReportDownload() {
     const params = {};
     if (startDate) params.startDate = startDate;
     if (endDate)   params.endDate   = endDate;
-    
+
     try {
-      const token = localStorage.getItem('token');
-      const query = new URLSearchParams({ ...params, format: 'csv' }).toString();
-      const url = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/reports?${query}`;
-      
+      const token = localStorage.getItem("token");
+      const query = new URLSearchParams({ ...params, format: "csv" }).toString();
+      const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"}/reports?${query}`;
       const response = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to download CSV');
-      }
-      
+      if (!response.ok) throw new Error("Failed to download CSV");
       const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
-      const filename = startDate && endDate
-        ? `report-${startDate}_to_${endDate}.csv`
-        : 'report-all-time.csv';
-      
-      const a = document.createElement('a');
+      const filename =
+        startDate && endDate
+          ? `report-${startDate}_to_${endDate}.csv`
+          : "report-all-time.csv";
+      const a = document.createElement("a");
       a.href = blobUrl;
       a.download = filename;
       document.body.appendChild(a);
@@ -57,112 +60,158 @@ export default function ReportDownload() {
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
     } catch (err) {
-      setError('Failed to download CSV: ' + (err.message || 'Unknown error'));
+      setError("Failed to download CSV: " + (err.message || "Unknown error"));
     }
   }
 
-  const COLS = ["Date", "Amount", "Payments", "Valid", "Overpaid", "Underpaid", "Students"];
+  const TABLE_COLS = [
+    { key: "date",               label: "Date" },
+    { key: "totalAmount",        label: "Amount (XLM)" },
+    { key: "paymentCount",       label: "Payments" },
+    { key: "validCount",         label: "Valid",      color: "var(--success-text)" },
+    { key: "overpaidCount",      label: "Overpaid",   color: "var(--warning-text)" },
+    { key: "underpaidCount",     label: "Underpaid",  color: "var(--danger-text)" },
+    { key: "uniqueStudentCount", label: "Students" },
+  ];
 
   return (
-    <>
-      <style>{`
-        .rpt-wrap { max-width: 800px; margin: 2.5rem auto; padding: 0 1rem; }
-        .rpt-input { padding: 0.6rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; background: var(--bg); color: var(--text); outline: none; }
-        .rpt-input:focus { border-color: var(--accent); }
-        .rpt-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
-        .rpt-stat { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; }
-        .rpt-stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 0.35rem; }
-        .rpt-stat-value { font-size: 1.4rem; font-weight: 700; }
-        .rpt-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-        .rpt-table th { text-align: left; padding: 0.6rem 0.75rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
-        .rpt-table td { padding: 0.75rem; border-bottom: 1px solid var(--border); }
-        .rpt-table tbody tr:last-child td { border-bottom: none; }
-        .rpt-table tbody tr:hover { background: rgba(126,200,227,0.05); }
-        .rpt-table-wrap { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-      `}</style>
+    <div className="page-wrap">
+      <PageHero
+        eyebrow="Analytics"
+        title="Payment Reports"
+        subtitle="Generate an on-chain payment summary and daily breakdown for any date range."
+      />
 
-      <div className="rpt-wrap">
-        <h2 style={{ marginBottom: "0.25rem" }}>Reports</h2>
-        <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginBottom: "1.75rem" }}>
-          Generate a payment summary for any date range.
-        </p>
-
-        <form onSubmit={handleGenerate} style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div>
-            <label style={{ display: "block", fontSize: "0.78rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)", marginBottom: "0.35rem" }}>Start Date</label>
-            <input type="date" className="rpt-input" value={startDate} onChange={e => setStartDate(e.target.value)} />
+      {/* Filter form */}
+      <div className="card" style={{ marginBottom: "1.5rem" }}>
+        <div className="card-header">
+          <div className="card-title" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <IconCalendar size={16} /> Date Range
           </div>
-          <div>
-            <label style={{ display: "block", fontSize: "0.78rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)", marginBottom: "0.35rem" }}>End Date</label>
-            <input type="date" className="rpt-input" value={endDate} onChange={e => setEndDate(e.target.value)} />
-          </div>
-          <button type="submit" disabled={loading} className="btn-primary">
-            {loading ? "Generating…" : "Generate"}
-          </button>
-        </form>
-
-        {error && (
-          <div style={{ marginTop: "1rem", padding: "0.75rem 1rem", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, color: "#991b1b", fontSize: "0.875rem" }}>
-            {error}
-          </div>
-        )}
-
-        {report && (
-          <>
-            {/* Summary stats */}
-            <div className="rpt-stat-grid">
-              {[
-                { label: "Total Collected", value: `${report.summary.totalAmount} XLM` },
-                { label: "Payments",        value: report.summary.paymentCount },
-                { label: "Valid",           value: report.summary.validCount,     color: "#166534" },
-                { label: "Overpaid",        value: report.summary.overpaidCount,  color: "#854d0e" },
-                { label: "Underpaid",       value: report.summary.underpaidCount, color: "#991b1b" },
-                { label: "Paid Students",   value: report.summary.fullyPaidStudentCount },
-              ].map(({ label, value, color }) => (
-                <div key={label} className="rpt-stat">
-                  <div className="rpt-stat-label">{label}</div>
-                  <div className="rpt-stat-value" style={color ? { color } : {}}>{value}</div>
-                </div>
-              ))}
+        </div>
+        <div className="card-body">
+          <form onSubmit={handleGenerate} style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Start Date</label>
+              <input
+                type="date"
+                className="form-input"
+                style={{ width: "auto" }}
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+              />
             </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">End Date</label>
+              <input
+                type="date"
+                className="form-input"
+                style={{ width: "auto" }}
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+              />
+            </div>
+            <button type="submit" disabled={loading} className="btn btn-primary" style={{ alignSelf: "flex-end" }}>
+              {loading ? "Generating…" : "Generate Report"}
+            </button>
+            {(startDate || endDate) && !loading && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ alignSelf: "flex-end" }}
+                onClick={() => { setStartDate(""); setEndDate(""); setReport(null); }}
+              >
+                Clear
+              </button>
+            )}
+          </form>
+        </div>
+      </div>
 
-            <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "1rem" }}>
-              Period: {report.period.startDate || "all time"} → {report.period.endDate || "all time"} &nbsp;·&nbsp;
-              Generated {new Date(report.generatedAt).toLocaleString()}
+      {error && (
+        <div className="alert alert-danger" style={{ marginBottom: "1rem" }}>
+          <IconAlertTriangle size={15} />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {report && (
+        <>
+          {/* Period info */}
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "1rem",
+            flexWrap: "wrap",
+            gap: "0.5rem",
+          }}>
+            <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+              Period: <strong>{report.period.startDate || "all time"}</strong>
+              {" → "}
+              <strong>{report.period.endDate || "all time"}</strong>
+              &nbsp;·&nbsp;Generated {new Date(report.generatedAt).toLocaleString()}
             </p>
+            <button
+              onClick={handleCsv}
+              className="btn btn-ghost btn-sm"
+              style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}
+            >
+              <IconDownload size={14} /> Download CSV
+            </button>
+          </div>
 
-            {/* Daily table */}
-            {report.byDate.length > 0 ? (
-              <div className="rpt-table-wrap">
-                <table className="rpt-table">
+          {/* Summary stats */}
+          <div className="stat-grid" style={{ marginBottom: "1.5rem" }}>
+            <StatCard label="Total Collected" value={report.summary.totalAmount} sub="XLM" Icon={IconTrendingUp} color="violet" />
+            <StatCard label="Payments"        value={report.summary.paymentCount}                            Icon={IconBarChart}  color="cyan" />
+            <StatCard label="Valid"           value={report.summary.validCount}                              Icon={IconCheck}     color="green" />
+            <StatCard label="Overpaid"        value={report.summary.overpaidCount}                           Icon={IconAlertTriangle} color="amber" />
+            <StatCard label="Underpaid"       value={report.summary.underpaidCount}                          Icon={IconAlertTriangle} color="rose" />
+            <StatCard label="Paid Students"   value={report.summary.fullyPaidStudentCount}                   Icon={IconCheck}     color="indigo" />
+          </div>
+
+          {/* Daily breakdown table */}
+          {report.byDate.length > 0 ? (
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Daily Breakdown</div>
+                <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+                  {report.byDate.length} days
+                </span>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="data-table">
                   <thead>
-                    <tr>{COLS.map(h => <th key={h}>{h}</th>)}</tr>
+                    <tr>
+                      {TABLE_COLS.map(col => (
+                        <th key={col.key} scope="col">{col.label}</th>
+                      ))}
+                    </tr>
                   </thead>
                   <tbody>
                     {report.byDate.map(row => (
                       <tr key={row.date}>
-                        <td>{row.date}</td>
-                        <td>{row.totalAmount}</td>
+                        <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>{row.date}</td>
+                        <td style={{ fontVariantNumeric: "tabular-nums" }}>{row.totalAmount}</td>
                         <td>{row.paymentCount}</td>
-                        <td style={{ color: "#166534" }}>{row.validCount}</td>
-                        <td style={{ color: "#854d0e" }}>{row.overpaidCount}</td>
-                        <td style={{ color: "#991b1b" }}>{row.underpaidCount}</td>
+                        <td style={{ color: "var(--success-text)", fontWeight: 600 }}>{row.validCount}</td>
+                        <td style={{ color: "var(--warning-text)", fontWeight: 600 }}>{row.overpaidCount}</td>
+                        <td style={{ color: "var(--danger-text)", fontWeight: 600 }}>{row.underpaidCount}</td>
                         <td>{row.uniqueStudentCount}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            ) : (
-              <p style={{ color: "var(--muted)" }}>No payments found for this period.</p>
-            )}
-
-            <button onClick={handleCsv} className="btn-primary" style={{ marginTop: "1.25rem" }}>
-              Download CSV
-            </button>
-          </>
-        )}
-      </div>
-    </>
+            </div>
+          ) : (
+            <div style={{ textAlign: "center", padding: "3rem", color: "var(--text-muted)" }}>
+              <p style={{ fontWeight: 500 }}>No payments in this period</p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }

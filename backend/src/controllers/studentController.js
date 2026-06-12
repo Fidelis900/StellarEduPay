@@ -831,4 +831,16 @@ async function exportStudents(req, res, next) {
   }
 }
 
-module.exports = { registerStudent, getAllStudents, getStudent, getPublicStudentInfo, updateStudent, deleteStudent, getPaymentSummary, bulkImportStudents, getOverdueStudents, resetPayment, reconcileStudent, parseCsvBuffer, exportStudents };
+async function getFeeHistory(req, res, next) {
+  try {
+    const { schoolId } = req;
+    const { studentId } = req.params;
+    const StudentFeeHistory = require('../models/studentFeeHistoryModel');
+    const history = await StudentFeeHistory.find({ schoolId, studentId }).sort({ archivedAt: -1 }).lean();
+    res.json({ studentId, history });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { registerStudent, getAllStudents, getStudent, getPublicStudentInfo, updateStudent, deleteStudent, getPaymentSummary, bulkImportStudents, getOverdueStudents, resetPayment, reconcileStudent, parseCsvBuffer, exportStudents, getFeeHistory };

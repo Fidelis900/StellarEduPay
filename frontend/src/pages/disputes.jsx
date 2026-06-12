@@ -1,12 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
 import { getDisputes, resolveDispute } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
+import {
+  IconAlertTriangle, IconExternalLink,
+  IconChevronLeft, IconChevronRight, IconSearch,
+} from "../components/Icons";
+import PageHero from "../components/PageHero";
 
-const STATUS_COLORS = {
-  open:         { color: "#166534", bg: "#dcfce7" },
-  under_review: { color: "#854d0e", bg: "#fef9c3" },
-  resolved:     { color: "#1e40af", bg: "#dbeafe" },
-  rejected:     { color: "#991b1b", bg: "#fee2e2" },
+const STATUS_META = {
+  open:         { cls: "badge-success", label: "Open" },
+  under_review: { cls: "badge-warning", label: "Under Review" },
+  resolved:     { cls: "badge-info",    label: "Resolved" },
+  rejected:     { cls: "badge-danger",  label: "Rejected" },
 };
 
 const STELLAR_EXPLORER_BASE =
@@ -15,19 +20,19 @@ const STELLAR_EXPLORER_BASE =
     : "https://stellar.expert/explorer/testnet/tx/";
 
 function StatusBadge({ status }) {
-  const style = STATUS_COLORS[status] || { color: "#475569", bg: "#f1f5f9" };
+  const meta = STATUS_META[status] || { cls: "badge-neutral", label: status };
   return (
-    <span style={{ ...style, padding: "0.15rem 0.6rem", borderRadius: 20, fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>
-      {status.replace("_", " ")}
+    <span className={`badge ${meta.cls}`} style={{ textTransform: "none" }}>
+      {meta.label}
     </span>
   );
 }
 
 function ResolveForm({ dispute, onResolved }) {
-  const [note, setNote] = useState("");
-  const [status, setStatus] = useState("resolved");
+  const [note, setNote]         = useState("");
+  const [status, setStatus]     = useState("resolved");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError]       = useState(null);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -46,218 +51,319 @@ function ResolveForm({ dispute, onResolved }) {
 
   return (
     <form onSubmit={handleSubmit} style={{ marginTop: "1rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
-        {["resolved", "rejected", "under_review"].map((s) => (
-          <label key={s} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.85rem", cursor: "pointer" }}>
-            <input type="radio" name="status" value={s} checked={status === s} onChange={() => setStatus(s)} />
-            {s.replace("_", " ")}
-          </label>
-        ))}
+      <div style={{ marginBottom: "0.75rem" }}>
+        <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.5rem" }}>
+          Set status
+        </div>
+        <div style={{ display: "flex", gap: "0.625rem", flexWrap: "wrap" }}>
+          {[
+            { value: "resolved",     label: "Resolved" },
+            { value: "rejected",     label: "Rejected" },
+            { value: "under_review", label: "Under Review" },
+          ].map(opt => (
+            <label
+              key={opt.value}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.375rem",
+                fontSize: "0.8125rem",
+                cursor: "pointer",
+                padding: "0.3rem 0.75rem",
+                border: `1.5px solid ${status === opt.value ? "var(--accent)" : "var(--border)"}`,
+                borderRadius: "var(--radius-sm)",
+                background: status === opt.value ? "var(--accent-subtle)" : "transparent",
+                color: status === opt.value ? "var(--accent)" : "var(--text)",
+                fontWeight: status === opt.value ? 600 : 400,
+                transition: "all 0.12s",
+              }}
+            >
+              <input
+                type="radio"
+                name={`status-${dispute._id}`}
+                value={opt.value}
+                checked={status === opt.value}
+                onChange={() => setStatus(opt.value)}
+                style={{ display: "none" }}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
       </div>
-      <textarea
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        maxLength={1000}
-        rows={3}
-        placeholder="Resolution note…"
-        style={{ width: "100%", padding: "0.5rem 0.75rem", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)", color: "var(--text)", fontSize: "0.875rem", resize: "vertical", boxSizing: "border-box" }}
-      />
-      {error && <p role="alert" style={{ color: "#dc2626", fontSize: "0.8rem", margin: "0.25rem 0" }}>{error}</p>}
+
+      <div className="form-group">
+        <label className="form-label">Resolution Note *</label>
+        <textarea
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          maxLength={1000}
+          rows={3}
+          placeholder="Explain the resolution…"
+          className="form-input form-textarea"
+          style={{ resize: "vertical" }}
+        />
+      </div>
+
+      {error && (
+        <p role="alert" style={{ color: "var(--danger-text)", fontSize: "0.8125rem", marginBottom: "0.5rem" }}>
+          {error}
+        </p>
+      )}
+
       <button
         type="submit"
         disabled={submitting}
-        style={{ marginTop: "0.5rem", padding: "0.4rem 1rem", border: "none", borderRadius: 6, background: "var(--primary)", color: "#fff", cursor: submitting ? "not-allowed" : "pointer", fontSize: "0.85rem", opacity: submitting ? 0.7 : 1 }}
+        className="btn btn-primary"
       >
-        {submitting ? "Saving…" : "Save"}
+        {submitting ? "Saving…" : "Save Resolution"}
       </button>
     </form>
   );
 }
 
+function DisputeCard({ dispute, expanded, onToggle, onResolved }) {
+  const canResolve = dispute.status === "open" || dispute.status === "under_review";
+
+  return (
+    <div className="card" style={{ marginBottom: "0.75rem" }}>
+      <div className="card-body">
+        {/* Top row */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", marginBottom: "0.75rem" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.625rem", flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700, fontSize: "0.9375rem" }}>{dispute.studentId}</span>
+              <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>by {dispute.raisedBy}</span>
+              <span style={{ fontSize: "0.75rem", color: "var(--text-subtle)" }}>
+                {new Date(dispute.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
+              </span>
+            </div>
+            <div style={{ marginTop: "0.375rem", display: "flex", alignItems: "center", gap: "0.375rem" }}>
+              <a
+                href={`${STELLAR_EXPLORER_BASE}${dispute.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "var(--accent)", fontSize: "0.775rem", fontFamily: "monospace", display: "flex", alignItems: "center", gap: "0.25rem" }}
+                aria-label={`View transaction on Stellar Explorer`}
+              >
+                {dispute.txHash?.slice(0, 18)}…
+                <IconExternalLink size={11} />
+              </a>
+            </div>
+          </div>
+          <StatusBadge status={dispute.status} />
+        </div>
+
+        {/* Reason preview */}
+        <p style={{ fontSize: "0.875rem", color: "var(--text)", lineHeight: 1.6, marginBottom: "0.75rem" }}>
+          {!expanded && dispute.reason?.length > 140
+            ? dispute.reason.slice(0, 140) + "…"
+            : dispute.reason}
+        </p>
+
+        <button
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="btn btn-sm btn-ghost"
+        >
+          {expanded ? "Collapse" : canResolve ? "View & Resolve" : "View Details"}
+        </button>
+
+        {/* Expanded section */}
+        {expanded && (
+          <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+            {dispute.resolutionNote && (
+              <div className="alert alert-info" style={{ marginBottom: "1rem" }}>
+                <strong>Resolution note:</strong>&nbsp;{dispute.resolutionNote}
+              </div>
+            )}
+            {canResolve && <ResolveForm dispute={dispute} onResolved={onResolved} />}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function DisputesPage() {
-  const [disputes, setDisputes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [disputes, setDisputes]       = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState(null);
+  const [page, setPage]               = useState(1);
+  const [totalPages, setTotalPages]   = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
   const [studentFilter, setStudentFilter] = useState("");
-  const [expanded, setExpanded] = useState(null);
+  const [draftStudent, setDraftStudent]   = useState("");
+  const [expanded, setExpanded]       = useState(null);
 
-  // Guard: redirect unauthenticated users (no JWT in localStorage)
   useEffect(() => {
     if (typeof window !== "undefined" && !localStorage.getItem("token")) {
       window.location.href = "/";
     }
   }, []);
 
-  const fetchDisputes = useCallback(
-    async (p = page) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const params = { page: p, limit: 20 };
-        if (statusFilter) params.status = statusFilter;
-        if (studentFilter.trim()) params.studentId = studentFilter.trim();
-        const res = await getDisputes(params);
-        setDisputes(res.data.disputes || []);
-        setTotalPages(res.data.pagination?.totalPages || 1);
-      } catch (err) {
-        setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || "Failed to load disputes.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [page, statusFilter, studentFilter]
-  );
+  const fetchDisputes = useCallback(async (p = page) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = { page: p, limit: 20 };
+      if (statusFilter) params.status = statusFilter;
+      if (studentFilter.trim()) params.studentId = studentFilter.trim();
+      const res = await getDisputes(params);
+      setDisputes(res.data.disputes || []);
+      setTotalPages(res.data.pagination?.totalPages || 1);
+    } catch (err) {
+      setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || "Failed to load disputes.");
+    } finally {
+      setLoading(false);
+    }
+  }, [page, statusFilter, studentFilter]);
 
   useEffect(() => { fetchDisputes(page); }, [page, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleResolved(updated) {
-    setDisputes((prev) => prev.map((d) => (d._id === updated._id ? updated : d)));
+    setDisputes(prev => prev.map(d => d._id === updated._id ? updated : d));
     setExpanded(null);
   }
 
   function handleSearch(e) {
     e.preventDefault();
+    setStudentFilter(draftStudent);
     setPage(1);
-    fetchDisputes(1);
   }
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: "2rem 1rem" }}>
-      <h1 style={{ fontSize: "1.4rem", marginBottom: "0.25rem" }}>Disputes</h1>
-      <p style={{ color: "var(--muted)", fontSize: "0.875rem", marginBottom: "1.5rem" }}>
-        Review and resolve payment disputes raised by parents.
-      </p>
+    <>
+      <div className="page-wrap">
+        <PageHero
+          eyebrow="Support"
+          title="Payment Disputes"
+          subtitle="Review and resolve payment disputes raised by parents and guardians."
+        />
 
-      {/* Filter bar */}
-      <form onSubmit={handleSearch} style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1.5rem", alignItems: "flex-end" }}>
-        <div>
-          <label htmlFor="dp-status" style={{ display: "block", fontSize: "0.75rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Status</label>
-          <select
-            id="dp-status"
-            value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-            style={{ padding: "0.45rem 0.75rem", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)", color: "var(--text)", fontSize: "0.875rem" }}
-          >
-            <option value="">All</option>
-            <option value="open">Open</option>
-            <option value="under_review">Under Review</option>
-            <option value="resolved">Resolved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-        </div>
-        <div>
-          <label htmlFor="dp-student" style={{ display: "block", fontSize: "0.75rem", color: "var(--muted)", marginBottom: "0.2rem" }}>Student ID</label>
-          <input
-            id="dp-student"
-            type="text"
-            value={studentFilter}
-            onChange={(e) => setStudentFilter(e.target.value)}
-            placeholder="e.g. STU001"
-            style={{ padding: "0.45rem 0.75rem", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)", color: "var(--text)", fontSize: "0.875rem" }}
-          />
-        </div>
-        <button type="submit" style={{ padding: "0.45rem 1rem", border: "none", borderRadius: 6, background: "var(--primary)", color: "#fff", cursor: "pointer", fontSize: "0.875rem" }}>
-          Search
-        </button>
-      </form>
-
-      {error && (
-        <div role="alert" style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 6, padding: "0.75rem", color: "#991b1b", fontSize: "0.875rem", marginBottom: "1rem" }}>
-          {error}
-        </div>
-      )}
-
-      {loading ? (
-        <p style={{ color: "var(--muted)" }}>Loading…</p>
-      ) : disputes.length === 0 ? (
-        <p style={{ color: "var(--muted)" }}>No disputes found.</p>
-      ) : (
-        <div>
-          {disputes.map((d) => (
-            <div
-              key={d._id}
-              style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "1rem", marginBottom: "0.75rem", background: "var(--bg)" }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "0.5rem" }}>
-                <div>
-                  <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{d.studentId}</span>
-                  <span style={{ color: "var(--muted)", fontSize: "0.8rem", marginLeft: "0.75rem" }}>
-                    by {d.raisedBy}
-                  </span>
-                </div>
-                <StatusBadge status={d.status} />
-              </div>
-
-              <div style={{ marginTop: "0.5rem", fontSize: "0.8rem", color: "var(--muted)", fontFamily: "monospace" }}>
-                <a
-                  href={`${STELLAR_EXPLORER_BASE}${d.txHash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: "var(--accent, #3b82f6)" }}
-                  aria-label={`View transaction ${d.txHash} on Stellar Explorer`}
+        {/* Filter bar */}
+        <div className="card" style={{ marginBottom: "1.25rem" }}>
+          <div className="card-body" style={{ padding: "1rem 1.25rem" }}>
+            <form onSubmit={handleSearch} style={{ display: "flex", gap: "0.625rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div>
+                <label htmlFor="dp-status" className="form-label">Status</label>
+                <select
+                  id="dp-status"
+                  value={statusFilter}
+                  onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
+                  className="form-input form-select"
+                  style={{ width: "auto" }}
                 >
-                  {d.txHash?.slice(0, 20)}…
-                </a>
+                  <option value="">All</option>
+                  <option value="open">Open</option>
+                  <option value="under_review">Under Review</option>
+                  <option value="resolved">Resolved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
               </div>
-
-              <p style={{ margin: "0.5rem 0 0", fontSize: "0.875rem", color: "var(--text)" }}>
-                {d.reason?.length > 120 ? d.reason.slice(0, 120) + "…" : d.reason}
-              </p>
-
-              <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "var(--muted)" }}>
-                {new Date(d.createdAt).toLocaleString()}
-              </div>
-
-              {/* Expand / collapse detail + resolve form */}
-              <button
-                onClick={() => setExpanded(expanded === d._id ? null : d._id)}
-                aria-expanded={expanded === d._id}
-                style={{ marginTop: "0.75rem", padding: "0.3rem 0.75rem", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)", color: "var(--text)", cursor: "pointer", fontSize: "0.8rem" }}
-              >
-                {expanded === d._id ? "Hide details" : "View details"}
-              </button>
-
-              {expanded === d._id && (
-                <div style={{ marginTop: "1rem" }}>
-                  <p style={{ fontSize: "0.875rem" }}><strong>Full reason:</strong> {d.reason}</p>
-                  {d.resolutionNote && (
-                    <p style={{ fontSize: "0.875rem", marginTop: "0.5rem" }}><strong>Resolution note:</strong> {d.resolutionNote}</p>
-                  )}
-                  {(d.status === "open" || d.status === "under_review") && (
-                    <ResolveForm dispute={d} onResolved={handleResolved} />
-                  )}
+              <div>
+                <label htmlFor="dp-student" className="form-label">Student ID</label>
+                <div style={{ display: "flex", gap: "0.375rem" }}>
+                  <input
+                    id="dp-student"
+                    type="text"
+                    value={draftStudent}
+                    onChange={e => setDraftStudent(e.target.value)}
+                    placeholder="e.g. STU001"
+                    className="form-input"
+                    style={{ width: 160 }}
+                  />
+                  <button type="submit" className="btn btn-ghost" style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    <IconSearch size={14} /> Search
+                  </button>
                 </div>
+              </div>
+              {(statusFilter || studentFilter) && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => { setStatusFilter(""); setStudentFilter(""); setDraftStudent(""); setPage(1); }}
+                  style={{ alignSelf: "flex-end" }}
+                >
+                  Clear filters
+                </button>
               )}
-            </div>
-          ))}
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div style={{ display: "flex", gap: "0.5rem", justifyContent: "center", marginTop: "1.5rem" }}>
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                style={{ padding: "0.4rem 0.9rem", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)", color: "var(--text)", cursor: page === 1 ? "not-allowed" : "pointer", opacity: page === 1 ? 0.5 : 1 }}
-              >
-                ← Prev
-              </button>
-              <span style={{ padding: "0.4rem 0.75rem", fontSize: "0.875rem", color: "var(--muted)" }}>
-                {page} / {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                style={{ padding: "0.4rem 0.9rem", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)", color: "var(--text)", cursor: page === totalPages ? "not-allowed" : "pointer", opacity: page === totalPages ? 0.5 : 1 }}
-              >
-                Next →
-              </button>
-            </div>
-          )}
+            </form>
+          </div>
         </div>
-      )}
-    </div>
+
+        {/* Error */}
+        {error && (
+          <div role="alert" className="alert alert-danger" style={{ marginBottom: "1rem" }}>
+            <IconAlertTriangle size={16} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* List */}
+        {loading ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="card">
+                <div className="card-body">
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                      <div className="skeleton" style={{ height: 16, width: 80 }} />
+                      <div className="skeleton" style={{ height: 12, width: 60 }} />
+                    </div>
+                    <div className="skeleton" style={{ height: 20, width: 70, borderRadius: 20 }} />
+                  </div>
+                  <div className="skeleton" style={{ height: 12, width: "100%", marginBottom: "0.5rem" }} />
+                  <div className="skeleton" style={{ height: 12, width: "70%" }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : disputes.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "4rem", color: "var(--text-muted)" }}>
+            <p style={{ fontWeight: 500, marginBottom: "0.25rem" }}>No disputes found</p>
+            <p style={{ fontSize: "0.8125rem" }}>
+              {statusFilter || studentFilter ? "Try clearing your filters." : "No disputes have been raised yet."}
+            </p>
+          </div>
+        ) : (
+          <div>
+            {disputes.map(d => (
+              <DisputeCard
+                key={d._id}
+                dispute={d}
+                expanded={expanded === d._id}
+                onToggle={() => setExpanded(expanded === d._id ? null : d._id)}
+                onResolved={handleResolved}
+              />
+            ))}
+
+            {totalPages > 1 && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "1rem" }}>
+                <span className="pagination-info">Page {page} of {totalPages}</span>
+                <div className="pagination-controls">
+                  <button
+                    className="page-btn"
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+                  >
+                    <IconChevronLeft size={15} /> Prev
+                  </button>
+                  <button
+                    className="page-btn"
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+                  >
+                    Next <IconChevronRight size={15} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </>
   );
 }

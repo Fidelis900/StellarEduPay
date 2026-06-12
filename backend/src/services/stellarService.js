@@ -258,35 +258,7 @@ async function verifyTransaction(txHash, walletAddress) {
   // Unwrap fee-bump transaction to get the inner transaction
   const innerTx = tx.inner_transaction || tx;
 
-  // 2. Check memo type
-  const memoType = innerTx.memo_type || 'none';
-  
-  if (memoType === 'none') {
-    const err = new Error(
-      "Transaction memo is missing or empty — cannot identify student",
-    );
-    err.code = "MISSING_MEMO";
-    throw err;
-  }
-  
-  if (memoType !== 'text') {
-    const err = new Error(
-      `Transaction memo type '${memoType}' is not supported. Only MEMO_TEXT is accepted for student ID matching.`,
-    );
-    err.code = "UNSUPPORTED_MEMO_TYPE";
-    err.memoType = memoType;
-    throw err;
-  }
-
-  const memo = innerTx.memo ? innerTx.memo.trim() : null;
-  if (!memo) {
-    const err = new Error(
-      "Transaction memo is missing or empty — cannot identify student",
-    );
-    err.code = "MISSING_MEMO";
-    throw err;
-  }
-
+  // 2. Find matching payment operation first (destination + asset checks before memo)
   const ops = await withStellarRetry(() => innerTx.operations(), {
     label: "verifyTransaction.operations",
   });
@@ -310,6 +282,35 @@ async function verifyTransaction(txHash, walletAddress) {
     const err = new Error(`Unsupported asset: ${assetCode}`);
     err.code = "UNSUPPORTED_ASSET";
     err.assetCode = assetCode;
+    throw err;
+  }
+
+  // 3. Check memo type (after destination/asset are validated)
+  const memoType = innerTx.memo_type || 'none';
+
+  if (memoType === 'none') {
+    const err = new Error(
+      "Transaction memo is missing or empty — cannot identify student",
+    );
+    err.code = "MISSING_MEMO";
+    throw err;
+  }
+
+  if (memoType !== 'text') {
+    const err = new Error(
+      `Transaction memo type '${memoType}' is not supported. Only MEMO_TEXT is accepted for student ID matching.`,
+    );
+    err.code = "UNSUPPORTED_MEMO_TYPE";
+    err.memoType = memoType;
+    throw err;
+  }
+
+  const memo = innerTx.memo ? innerTx.memo.trim() : null;
+  if (!memo) {
+    const err = new Error(
+      "Transaction memo is missing or empty — cannot identify student",
+    );
+    err.code = "MISSING_MEMO";
     throw err;
   }
 

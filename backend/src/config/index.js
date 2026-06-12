@@ -112,14 +112,6 @@ const STELLAR_TIMEOUT_MS = parseInt(
 // Secret used to sign/verify admin JWTs.
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  throw new Error(
-    "[Config] Missing required environment variable: JWT_SECRET\n" +
-    "Generate one with: node -e \"console.log(require('crypto').randomBytes(64).toString('hex'))\"",
-  );
-}
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "8h";
-
-if (!JWT_SECRET) {
   if (process.env.NODE_ENV === 'production') {
     throw new Error(
       '[Config] JWT_SECRET is required in production. ' +
@@ -132,6 +124,7 @@ if (!JWT_SECRET) {
     );
   }
 }
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "8h";
 
 // ── Fee Reminders ─────────────────────────────────────────────────────────────
 // How often the scheduler checks for unpaid fees (default: 24 hours)

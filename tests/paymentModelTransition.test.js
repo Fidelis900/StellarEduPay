@@ -14,24 +14,26 @@
 
 // ── Capture the pre-save hook from the schema ─────────────────────────────────
 
-let preSaveHook = null;
+// Use global so it's accessible from the hoisted jest.mock factory
+global.__preSaveHook = null;
 
-class MockSchema {
-  constructor() {
-    this.index  = jest.fn().mockReturnThis();
-    this.virtual = jest.fn().mockReturnValue({ get: jest.fn() });
-    this.pre  = jest.fn((event, fn) => {
-      if (event === 'save') preSaveHook = fn;
-    });
-    this.post = jest.fn();
+jest.mock('mongoose', () => {
+  class MockSchema {
+    constructor() {
+      this.index  = jest.fn().mockReturnThis();
+      this.virtual = jest.fn().mockReturnValue({ get: jest.fn() });
+      this.pre  = jest.fn((event, fn) => {
+        if (event === 'save') global.__preSaveHook = fn;
+      });
+      this.post = jest.fn();
+    }
   }
-}
-MockSchema.Types = { Mixed: {} };
-
-jest.mock('mongoose', () => ({
-  Schema: MockSchema,
-  model: jest.fn().mockReturnValue({}),
-}));
+  MockSchema.Types = { Mixed: {} };
+  return {
+    Schema: MockSchema,
+    model: jest.fn().mockReturnValue({}),
+  };
+});
 jest.mock('../backend/src/utils/softDelete', () => jest.fn());
 jest.mock('../backend/src/utils/memoEncryption', () => ({
   encryptMemo: jest.fn(v => v),
@@ -39,7 +41,11 @@ jest.mock('../backend/src/utils/memoEncryption', () => ({
 }));
 
 // Load the model so the schema and hooks are registered.
-require('../backend/src/models/paymentModel');
+// Reset modules first to ensure a fresh load with our mocks applied.
+beforeAll(() => {
+  jest.resetModules();
+  require('../backend/src/models/paymentModel');
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -63,14 +69,14 @@ function makeDoc({ originalStatus, newStatus, isNew = false }) {
 /** Wrap the hook callback in a Promise so tests can use async/await. */
 function callHook(doc) {
   return new Promise((resolve, reject) => {
-    preSaveHook.call(doc, (err) => (err ? reject(err) : resolve()));
+    global.__preSaveHook.call(doc, (err) => (err ? reject(err) : resolve()));
   });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test('pre-save hook is registered', () => {
-  expect(preSaveHook).toBeInstanceOf(Function);
+  expect(global.__preSaveHook).toBeInstanceOf(Function);
 });
 
 // 1. SUCCESS → DISPUTED

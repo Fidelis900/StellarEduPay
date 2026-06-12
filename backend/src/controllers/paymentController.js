@@ -435,4 +435,7 @@ module.exports = {
   verifyTransactionHash,
   getExplorerUrl,
   wrapStellarError,
+  // Re-export from split controllers so tests importing paymentController still work
+  ...require('./paymentQueryController'),
+  ...require('./paymentAdminController'),
 };

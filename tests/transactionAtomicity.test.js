@@ -3,12 +3,13 @@
 // ─── Env setup ────────────────────────────────────────────────────────────────
 process.env.MONGO_URI = 'mongodb://localhost:27017/test';
 process.env.SCHOOL_WALLET_ADDRESS = 'GTEST123';
+process.env.JWT_SECRET = 'test-atomicity-secret';
 
 // ─── Session / transaction mock ───────────────────────────────────────────────
-// withTransaction executes the callback; endSession is a no-op.
-const mockWithTransaction = jest.fn(async (cb) => cb());
-const mockEndSession = jest.fn().mockResolvedValue(undefined);
-const mockStartSession = jest.fn().mockResolvedValue({
+// Use var so these are hoisted and available inside the jest.mock factory.
+var mockWithTransaction = jest.fn(async (cb) => cb());
+var mockEndSession = jest.fn().mockResolvedValue(undefined);
+var mockStartSession = jest.fn().mockResolvedValue({
   withTransaction: mockWithTransaction,
   endSession: mockEndSession,
 });

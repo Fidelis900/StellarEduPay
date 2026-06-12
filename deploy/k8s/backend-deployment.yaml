@@ -2,8 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
+  labels:
+    app: backend
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: backend
@@ -12,11 +14,35 @@ spec:
       labels:
         app: backend
     spec:
+      # Run as non-root (matches the non-root user in the Dockerfile)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
       containers:
         - name: backend
           image: stellaredupay/backend:latest
           ports:
             - containerPort: 5000
+          env:
+            # Inject sensitive values from a Kubernetes Secret, not plain ConfigMaps.
+            # Create the secret with:
+            #   kubectl create secret generic stellaredupay \
+            #     --from-literal=JWT_SECRET=<value> \
+            #     --from-literal=MONGO_URI=<value>
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: stellaredupay
+                  key: JWT_SECRET
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: stellaredupay
+                  key: MONGO_URI
+            - name: STELLAR_NETWORK
+              value: "mainnet"
+            - name: REDIS_HOST
+              value: "redis"
           readinessProbe:
             httpGet:
               path: /health
@@ -25,3 +51,18 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"

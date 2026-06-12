@@ -24,8 +24,13 @@ async function getReport(req, res, next) {
     if (report === undefined) { report = await generateReport({ schoolId: req.schoolId, startDate, endDate, timezone }); set(cacheKey, report, TTL.REPORT); }
 
     if (format === 'csv') {
-      const parts = [startDate && `${startDate}`, endDate && `${endDate}`].filter(Boolean);
-      const filename = parts.length === 2 ? `report-${parts[0]}-to-${parts[1]}.csv` : parts.length === 1 ? `report-${parts[0]}.csv` : 'report-all-time.csv';
+      const s = startDate || null;
+      const e = endDate   || null;
+      let filename;
+      if (s && e)       filename = `report-${s}-to-${e}.csv`;
+      else if (s)       filename = `report-${s}-to-all-time.csv`;
+      else if (e)       filename = `report-all-time-to-${e}.csv`;
+      else              filename = 'report-all-time.csv';
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(reportToCsv(report));
