@@ -341,6 +341,13 @@ class ConcurrentPaymentProcessor {
 
         const currentTotal = student.totalPaid || 0;
         const newTotal = currentTotal + amount;
+        
+        // Reconciliation Invariant Check
+        const allocationAmount = newTotal - currentTotal;
+        if (allocationAmount !== amount) {
+          throw new Error(`Reconciliation invariant failed: allocation (${allocationAmount}) != payment amount (${amount})`);
+        }
+        
         const newRemainingBalance = Math.max(0, student.feeAmount - newTotal);
         const isFeePaid = newTotal >= student.feeAmount;
 
@@ -428,6 +435,13 @@ class ConcurrentPaymentProcessor {
 
           const currentTotal = student.totalPaid || 0;
           const newTotal = currentTotal + amount;
+          
+          // Reconciliation Invariant Check
+          const allocationAmount = newTotal - currentTotal;
+          if (allocationAmount !== amount) {
+            throw new Error(`Reconciliation invariant failed: allocation (${allocationAmount}) != payment amount (${amount})`);
+          }
+          
           const newRemainingBalance = Math.max(0, student.feeAmount - newTotal);
           const isFeePaid = newTotal >= student.feeAmount;
 
@@ -487,6 +501,13 @@ class ConcurrentPaymentProcessor {
 
       const currentTotal = student.totalPaid || 0;
       const newTotal = currentTotal + amount;
+      
+      // Reconciliation Invariant Check
+      const allocationAmount = newTotal - currentTotal;
+      if (allocationAmount !== amount) {
+        throw new Error(`Reconciliation invariant failed: allocation (${allocationAmount}) != payment amount (${amount})`);
+      }
+      
       const newRemainingBalance = Math.max(0, student.feeAmount - newTotal);
       const isFeePaid = newTotal >= student.feeAmount;
 
@@ -612,7 +633,7 @@ const config = require("../config");
 const concurrentPaymentProcessor = new ConcurrentPaymentProcessor({
   idempotencyTtlMs: 60000,
   maxRequestsPerSecond: 100,
-  lockStrategy: CONCURRENCY_STRATEGY.OPTIMISTIC,
+  lockStrategy: CONCURRENCY_STRATEGY.PESSIMISTIC,
   lockTimeoutMs: 30000,
   maxRetries: 3,
   maxQueueDepth: config.MAX_QUEUE_DEPTH,
