@@ -199,7 +199,7 @@ const mockStudent = {
 
 /** Build a minimal intent record (non-expired). */
 function freshIntent(overrides = {}) {
-  return {
+  const base = {
     _id: 'intent001',
     studentId: STUDENT_ID,
     amount: 250,
@@ -208,6 +208,8 @@ function freshIntent(overrides = {}) {
     expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 h in the future
     ...overrides,
   };
+  base.toObject = () => ({ ...base });
+  return base;
 }
 
 /** Build a minimal verifyTransaction result (exact match by default). */

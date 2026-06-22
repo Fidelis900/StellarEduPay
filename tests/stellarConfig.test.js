@@ -25,16 +25,16 @@ describe('stellarConfig startup validation', () => {
     delete process.env.HORIZON_URL;
   });
 
-  test('throws if SCHOOL_WALLET_ADDRESS is missing', () => {
-    expect(loadConfig(undefined)).toThrow(/missing/i);
+  test('does not throw if SCHOOL_WALLET_ADDRESS is missing (optional in multi-school setup)', () => {
+    expect(loadConfig(undefined)).not.toThrow();
   });
 
   test('throws if SCHOOL_WALLET_ADDRESS is an invalid key', () => {
     expect(loadConfig('INVALID_KEY')).toThrow(/invalid/i);
   });
 
-  test('throws if SCHOOL_WALLET_ADDRESS is empty string', () => {
-    expect(loadConfig('')).toThrow(/missing/i);
+  test('does not throw if SCHOOL_WALLET_ADDRESS is empty string (treated as unset)', () => {
+    expect(loadConfig('')).not.toThrow();
   });
 
   test('loads successfully with a valid Stellar public key', () => {

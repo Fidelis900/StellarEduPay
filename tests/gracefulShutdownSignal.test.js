@@ -24,11 +24,25 @@ describe('SIGTERM graceful shutdown', () => {
       const expressApp = {
         use: jest.fn(),
         get: jest.fn(),
+        post: jest.fn(),
+        put: jest.fn(),
+        delete: jest.fn(),
         set: jest.fn(),
         listen: jest.fn(() => mockServer),
       };
+      const mockRouter = {
+        use: jest.fn(),
+        get: jest.fn(),
+        post: jest.fn(),
+        put: jest.fn(),
+        delete: jest.fn(),
+        patch: jest.fn(),
+      };
       const express = jest.fn(() => expressApp);
       express.json = jest.fn(() => jest.fn());
+      express.Router = jest.fn(() => mockRouter);
+      express.urlencoded = jest.fn(() => jest.fn());
+      express.static = jest.fn(() => jest.fn());
       return express;
     });
 

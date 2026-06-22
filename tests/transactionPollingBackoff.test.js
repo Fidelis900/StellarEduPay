@@ -8,6 +8,7 @@
  */
 
 process.env.MONGO_URI = 'mongodb://localhost:27017/test';
+process.env.POLL_INTERVAL_MS = '30000'; // lock base interval for backoff assertions
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
