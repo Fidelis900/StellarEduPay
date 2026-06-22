@@ -189,7 +189,7 @@ async function detectMemoCollision(
 
   const recentFromOtherSender = await Payment.findOne({
     schoolId,
-    studentId: memo,
+    memo,
     senderAddress: { $ne: senderAddress, $exists: true, $ne: null },
     confirmedAt: { $gte: windowStart },
     deletedAt: null,
@@ -615,7 +615,7 @@ async function syncPaymentsForSchool(school) {
         feeCategory: intent.feeCategory || null,
         feeValidationStatus: cumulativeStatus,
         excessAmount,
-        status: "confirmed",
+        status: "SUCCESS",
         memo,
         senderAddress,
         isSuspicious,
@@ -876,5 +876,8 @@ module.exports = {
   detectCrossSchoolMemoCollision,
   detectAbnormalPatterns,
   checkConfirmationStatus,
-  determineConfirmationState,
+  // recordPayment was moved to transactionService.savePayment (db layer split);
+  // re-exported under its original name since paymentController, retryService,
+  // transactionQueueService, and transactionRetryQueue still import it from here.
+  recordPayment: savePayment,
 };
