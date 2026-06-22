@@ -33,10 +33,23 @@ jest.mock('../backend/src/models/studentModel', () => {
   chainable.sort.mockReturnValue(chainable);
   chainable.skip.mockReturnValue(chainable);
   chainable.limit.mockResolvedValue(mockStudents);
+  const makeStudentQuery = (value) => {
+    const p = Promise.resolve(value);
+    p.includeDeleted = () => Promise.resolve(null);
+    p.lean = () => Promise.resolve(value);
+    return p;
+  };
+  const findOneMock = jest.fn().mockImplementation(() =>
+    makeStudentQuery({ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false })
+  );
+  findOneMock.mockResolvedValueOnce = (val) => {
+    findOneMock.mockImplementationOnce(() => makeStudentQuery(val));
+    return findOneMock;
+  };
   return {
     create: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
     find: jest.fn().mockReturnValue(chainable),
-    findOne: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
+    findOne: findOneMock,
     findOneAndUpdate: jest.fn().mockResolvedValue({}),
     countDocuments: jest.fn().mockResolvedValue(1),
   };
@@ -44,12 +57,12 @@ jest.mock('../backend/src/models/studentModel', () => {
 
 jest.mock('../backend/src/models/paymentModel', () => {
   const mockPayments = [
-    { schoolId: 'SCH001', studentId: 'STU001', txHash: 'abc123', amount: 200 },
+    { schoolId: 'SCH001', studentId: 'STU001', txHash: 'abc123', amount: 200, deletedAt: null },
   ];
 
   const matchesFilter = (payment, filter = {}) =>
     Object.entries(filter).every(([key, value]) => {
-      if (value && typeof value === 'object') return true;
+      if (value !== null && typeof value === 'object') return true;
       return payment[key] === value;
     });
 
@@ -79,7 +92,10 @@ jest.mock('../backend/src/models/paymentModel', () => {
 });
 
 jest.mock('../backend/src/models/paymentIntentModel', () => ({
-  create: jest.fn().mockResolvedValue({ studentId: 'STU001', amount: 200, memo: 'ABCD1234', status: 'pending' }),
+  create: jest.fn().mockResolvedValue({
+    studentId: 'STU001', amount: 200, memo: 'ABCD1234', status: 'pending',
+    toObject() { return { studentId: 'STU001', amount: 200, memo: 'ABCD1234', status: 'pending' }; },
+  }),
   findOne: jest.fn().mockResolvedValue({ studentId: 'STU001', amount: 200, memo: 'ABCD1234', status: 'pending' }),
   findByIdAndUpdate: jest.fn().mockResolvedValue({}),
 }));
@@ -231,7 +247,7 @@ jest.mock('../backend/src/config/stellarConfig', () => ({
 
 jest.mock('../backend/src/services/stellarService', () => ({
   syncPayments: jest.fn().mockResolvedValue(undefined),
-  syncPaymentsForSchool: jest.fn().mockResolvedValue(undefined),
+  syncPaymentsForSchool: jest.fn().mockResolvedValue({ found: 0, new: 0, matched: 0, unmatched: 0, failed: 0, alreadyProcessed: 0, failedDetails: [] }),
   verifyTransaction: jest.fn().mockResolvedValue({
     hash: 'abc123',
     memo: 'STU001',
@@ -347,8 +363,8 @@ describe('Full payment flow', () => {
     expect(res.body.payments).toHaveLength(1);
     expect(res.body.payments[0]).toHaveProperty('txHash', 'school-a-tx');
     expect(res.body.payments.map((p) => p.txHash)).not.toContain('school-b-tx');
-    expect(Payment.countDocuments).toHaveBeenLastCalledWith({ schoolId: 'SCH_A', studentId: 'STU001' });
-    expect(Payment.find).toHaveBeenLastCalledWith({ schoolId: 'SCH_A', studentId: 'STU001' });
+    expect(Payment.countDocuments).toHaveBeenLastCalledWith({ schoolId: 'SCH_A', studentId: 'STU001', deletedAt: null });
+    expect(Payment.find).toHaveBeenLastCalledWith({ schoolId: 'SCH_A', studentId: 'STU001', deletedAt: null });
   });
 });
 
@@ -432,15 +448,72 @@ describe('Payment API', () => {
     expect(res.body).toHaveProperty('message', 'Sync complete');
   });
 
-  test('POST /api/payments/verify — returns 409 for duplicate transaction', async () => {
+  // #605 — sync lock tests
+  describe('POST /api/payments/sync — concurrent lock', () => {
+    beforeEach(() => {
+      // Clear the in-memory lock set between tests by accessing it via the controller module
+      const ctrl = require('../backend/src/controllers/paymentController');
+      if (ctrl._syncLocks) ctrl._syncLocks.clear();
+    });
+
+    afterEach(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    test('second concurrent request returns 409 SYNC_IN_PROGRESS', async () => {
+      const stellarService = require('../backend/src/services/stellarService');
+      // Hold the lock open with a never-resolving promise
+      stellarService.syncPaymentsForSchool.mockImplementationOnce(() => new Promise(() => {}));
+
+      // Fire first request without awaiting — it holds the lock
+      testApi.post('/api/payments/sync').end(() => {});
+      await new Promise((r) => setTimeout(r, 30));
+
+      // Second request must be rejected while lock is held
+      const second = await testApi.post('/api/payments/sync');
+      expect(second.status).toBe(409);
+      expect(second.body).toHaveProperty('code', 'SYNC_IN_PROGRESS');
+    }, 5000);
+
+    test('lock is released after sync completes — subsequent request succeeds', async () => {
+      const stellarService = require('../backend/src/services/stellarService');
+      stellarService.syncPaymentsForSchool.mockResolvedValueOnce(
+        { found: 0, new: 0, matched: 0, unmatched: 0, failed: 0, alreadyProcessed: 0, failedDetails: [] }
+      );
+      await testApi.post('/api/payments/sync');
+
+      // After completion the lock must be gone
+      stellarService.syncPaymentsForSchool.mockResolvedValueOnce(
+        { found: 0, new: 0, matched: 0, unmatched: 0, failed: 0, alreadyProcessed: 0, failedDetails: [] }
+      );
+      const res = await testApi.post('/api/payments/sync');
+      expect(res.status).toBe(200);
+    });
+
+    test('lock is released even when sync throws an error', async () => {
+      const stellarService = require('../backend/src/services/stellarService');
+      stellarService.syncPaymentsForSchool.mockRejectedValueOnce(new Error('Horizon down'));
+      await testApi.post('/api/payments/sync'); // ignore error response
+
+      // Lock must be cleared — next request should not get 409
+      stellarService.syncPaymentsForSchool.mockResolvedValueOnce(
+        { found: 0, new: 0, matched: 0, unmatched: 0, failed: 0, alreadyProcessed: 0, failedDetails: [] }
+      );
+      const res = await testApi.post('/api/payments/sync');
+      expect(res.status).toBe(200);
+    });
+  });
+
+  test('POST /api/payments/verify — returns cached result for already-recorded transaction', async () => {
     const Payment = require('../backend/src/models/paymentModel');
     const txHash = 'b'.repeat(64);
-    Payment.findOne.mockResolvedValueOnce({ txHash });
+    Payment.findOne.mockResolvedValueOnce({ txHash, studentId: 'STU001', amount: 200, feeValidationStatus: 'valid' });
     const res = await testApi.post('/api/payments/verify')
       .set('Idempotency-Key', 'test-verify-dup')
       .send({ txHash });
-    expect(res.status).toBe(409);
-    expect(res.body).toHaveProperty('code', 'DUPLICATE_TX');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('cached', true);
+    expect(res.body).toHaveProperty('hash', txHash);
   });
 
   test('GET /api/payments/accepted-assets — returns assets with cache headers', async () => {
@@ -463,6 +536,8 @@ describe('Payment API', () => {
 
 describe('Fee Structure API', () => {
   test('POST /api/fees — creates a fee structure', async () => {
+    const FeeStructure = require('../backend/src/models/feeStructureModel');
+    FeeStructure.findOne.mockResolvedValueOnce(null); // no existing fee for this class
     const res = await testApi.post('/api/fees').send({ className: '5A', feeAmount: 200 });
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ className: '5A', feeAmount: 200 });
@@ -555,7 +630,7 @@ describe('Duplicate Student Detection', () => {
       studentId: 'STU001', name: 'Bob', class: '5A', feeAmount: 200,
     });
     expect(res.status).toBe(409);
-    expect(res.body).toHaveProperty('code', 'DUPLICATE_STUDENT');
+    expect(res.body.error).toHaveProperty('code', 'DUPLICATE_STUDENT');
   });
 
   test('POST /api/students — 201 with warning for same name+class', async () => {
@@ -579,6 +654,7 @@ describe('Duplicate Student Detection', () => {
   test('POST /api/students — 201 without warning for unique student', async () => {
     const Student = require('../backend/src/models/studentModel');
     Student.findOne.mockResolvedValueOnce(null); // no exact match
+    Student.findOne.mockResolvedValueOnce(null); // no soft-deleted match
     Student.findOne.mockResolvedValueOnce(null); // no fuzzy match
     Student.create.mockResolvedValueOnce({
       studentId: 'STU999', name: 'Unique', class: '7A', feeAmount: 300,
@@ -593,6 +669,7 @@ describe('Duplicate Student Detection', () => {
   test('POST /api/students — 409 when MongoDB throws duplicate key error', async () => {
     const Student = require('../backend/src/models/studentModel');
     Student.findOne.mockResolvedValueOnce(null); // race condition: no match found
+    Student.findOne.mockResolvedValueOnce(null); // no soft-deleted match
     Student.findOne.mockResolvedValueOnce(null); // no fuzzy match
     const mongoErr = new Error('E11000 duplicate key');
     mongoErr.code = 11000;
@@ -601,7 +678,7 @@ describe('Duplicate Student Detection', () => {
       studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200,
     });
     expect(res.status).toBe(409);
-    expect(res.body).toHaveProperty('code', 'DUPLICATE_STUDENT');
+    expect(res.body.error).toHaveProperty('code', 'DUPLICATE_STUDENT');
   });
 });
 

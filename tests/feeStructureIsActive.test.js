@@ -13,6 +13,9 @@
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 jest.mock('../backend/src/models/feeStructureModel');
+jest.mock('../backend/src/models/studentModel', () => ({
+  countDocuments: jest.fn().mockResolvedValue(0),
+}));
 jest.mock('../backend/src/cache', () => ({
   get: jest.fn().mockReturnValue(undefined),
   set: jest.fn(),
@@ -26,6 +29,13 @@ jest.mock('../backend/src/cache', () => ({
   TTL: { FEES: 60, STUDENT: 60 },
 }));
 jest.mock('../backend/src/services/auditService', () => ({ logAudit: jest.fn() }));
+
+// Top-level mongoose mock used by migration tests.
+// The mockCollection function is shared so individual tests can swap it out.
+const mockCollectionObj = { updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }) };
+jest.mock('mongoose', () => ({
+  connection: { collection: jest.fn(() => mockCollectionObj) },
+}));
 
 const FeeStructure = require('../backend/src/models/feeStructureModel');
 const { deleteFeeStructure } = require('../backend/src/controllers/feeController');
@@ -114,28 +124,25 @@ describe('isActive field — soft delete', () => {
 });
 
 describe('migration 005 — backfill isActive', () => {
+  const migration = require('../backend/migrations/005_backfill_fee_structure_is_active');
+
+  beforeEach(() => jest.clearAllMocks());
+
   test('up() sets isActive:true only on documents missing the field', async () => {
-    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 3 });
-    const mongoose = require('mongoose');
-    jest.spyOn(mongoose.connection, 'collection').mockReturnValue({ updateMany });
-
-    const migration = require('../backend/migrations/005_backfill_fee_structure_is_active');
+    mockCollectionObj.updateMany.mockResolvedValue({ modifiedCount: 3 });
     await migration.up();
-
-    expect(updateMany).toHaveBeenCalledWith(
+    expect(mockCollectionObj.updateMany).toHaveBeenCalledWith(
       { isActive: { $exists: false } },
       { $set: { isActive: true } }
     );
   });
 
   test('down() removes isActive from all documents', async () => {
-    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 3 });
-    const mongoose = require('mongoose');
-    jest.spyOn(mongoose.connection, 'collection').mockReturnValue({ updateMany });
-
-    const migration = require('../backend/migrations/005_backfill_fee_structure_is_active');
+    mockCollectionObj.updateMany.mockResolvedValue({ modifiedCount: 3 });
     await migration.down();
-
-    expect(updateMany).toHaveBeenCalledWith({}, { $unset: { isActive: '' } });
+    expect(mockCollectionObj.updateMany).toHaveBeenCalledWith(
+      {},
+      { $unset: { isActive: '' } }
+    );
   });
 });

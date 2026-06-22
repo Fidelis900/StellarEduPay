@@ -1,12 +1,12 @@
 'use strict';
 
 const database = require('../config/database');
-const { server } = require('../config/stellarConfig');
+const { horizonClient } = require('../config/stellarConfig');
 const config = require('../config');
 const { concurrentPaymentProcessor } = require('../services/concurrentPaymentProcessor');
 const { getReminderStatus } = require('../services/reminderService');
 const { getCachedRates } = require('../services/currencyConversionService');
-const { getRedisStatus } = require('../config/redisClient');
+const { getAuditHealth } = require('../services/auditService');
 const logger = require('../utils/logger');
 
 const STELLAR_CHECK_TIMEOUT_MS = 3000; // 3 second timeout for Stellar health check
@@ -17,10 +17,25 @@ async function checkStellar() {
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error(`Horizon did not respond within ${STELLAR_CHECK_TIMEOUT_MS}ms`)), STELLAR_CHECK_TIMEOUT_MS)
     );
-    await Promise.race([server.ledgers().limit(1).call(), timeoutPromise]);
-    return { status: 'ok', latencyMs: Date.now() - start };
+    // Use horizonClient.call() so the health probe itself benefits from failover
+    await Promise.race([
+      horizonClient.call((server) => server.ledgers().limit(1).call()),
+      timeoutPromise,
+    ]);
+    return {
+      status: 'ok',
+      latencyMs: Date.now() - start,
+      activeUrl: horizonClient.activeUrl,
+      endpoints: horizonClient.getCircuitBreakerStatus(),
+    };
   } catch (err) {
-    return { status: 'unreachable', error: err.message, latencyMs: Date.now() - start };
+    return {
+      status: 'unreachable',
+      error: err.message,
+      latencyMs: Date.now() - start,
+      activeUrl: horizonClient.activeUrl,
+      endpoints: horizonClient.getCircuitBreakerStatus(),
+    };
   }
 }
 
@@ -65,6 +80,30 @@ async function healthCheck(req, res) {
 
   const { queueDepth, maxQueueDepth } = concurrentPaymentProcessor.getStats();
 
+  // Retry queue backend info
+  const retrySelector = require('../services/retryServiceSelector');
+  const retryBackend = retrySelector.getSelectedBackend();
+  const redisConfigured = Boolean(process.env.REDIS_HOST);
+
+  // Retry queue init status. For the Redis-backed BullMQ pipeline this reflects
+  // whether initializeRetryQueue() succeeded; for the MongoDB fallback it reflects
+  // whether the worker is running.
+  let retryQueueStatus;
+  if (retryBackend === 'bullmq') {
+    const { getRetryQueueHealth } = require('../config/retryQueueSetup');
+    retryQueueStatus = getRetryQueueHealth().status; // 'ok' | 'failed' | 'not_started'
+  } else if (retryBackend === 'mongodb') {
+    retryQueueStatus = retrySelector.isRunning() ? 'ok' : 'stopped';
+  } else {
+    retryQueueStatus = 'not_started';
+  }
+
+  // A dead retry/dead-letter pipeline means failed payments are never retried —
+  // surface that as degraded (DB is still up, so not fully unhealthy).
+  if (retryQueueStatus === 'failed' && overallStatus === 'healthy') {
+    overallStatus = 'degraded';
+  }
+
   // Price feed status
   const cachedRates = getCachedRates();
   const priceFeedStatus = Object.entries(cachedRates).map(([currency, data]) => {
@@ -95,7 +134,9 @@ async function healthCheck(req, res) {
         ...(stellar.latencyMs !== undefined && { latency_ms: stellar.latencyMs }),
         ...(stellar.error && { error: stellar.error }),
         network: config.STELLAR_NETWORK,
-        horizonUrl: config.HORIZON_URL,
+        horizonUrl: stellar.activeUrl || config.HORIZON_URL,
+        activeEndpoint: stellar.activeUrl || config.HORIZON_URL,
+        endpoints: stellar.endpoints || [],
       },
       paymentProcessor: {
         queueDepth,
@@ -103,6 +144,7 @@ async function healthCheck(req, res) {
       },
       reminders: getReminderStatus(),
       retryQueue: {
+        status: retryQueueStatus,
         backend: retryBackend || 'not_started',
         redisConfigured,
         redisStatus: redisStatus.status,
@@ -114,6 +156,7 @@ async function healthCheck(req, res) {
         available: priceFeedStatus.length > 0,
         rates: priceFeedStatus,
       },
+      auditLog: getAuditHealth(),
     },
   };
 

@@ -27,8 +27,8 @@ jest.mock('ioredis', () => {
 });
 
 // Mock BullMQ Queue and Worker
-const mockQueueAdd = jest.fn().mockResolvedValue({ id: 'job-1' });
-const mockGetJob   = jest.fn().mockResolvedValue(null);
+var mockQueueAdd = jest.fn().mockResolvedValue({ id: 'job-1' });
+var mockGetJob   = jest.fn().mockResolvedValue(null);
 jest.mock('bullmq', () => ({
   Queue: jest.fn().mockImplementation(() => ({
     add:    mockQueueAdd,
@@ -41,11 +41,11 @@ jest.mock('bullmq', () => ({
 }));
 
 // Mock PendingVerification model
-const mockFindOneAndUpdate = jest.fn().mockResolvedValue(null);
-const mockFind             = jest.fn();
+var mockFindOneAndUpdate = jest.fn().mockResolvedValue(null);
+var mockFind             = jest.fn();
 jest.mock('../backend/src/models/pendingVerificationModel', () => ({
-  findOneAndUpdate: mockFindOneAndUpdate,
-  find:             mockFind,
+  findOneAndUpdate: (...a) => mockFindOneAndUpdate(...a),
+  find:             (...a) => mockFind(...a),
 }));
 
 // Mock logger

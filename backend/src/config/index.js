@@ -40,10 +40,16 @@ const STELLAR_NETWORK = process.env.STELLAR_NETWORK || "testnet";
 const IS_TESTNET = STELLAR_NETWORK !== "mainnet";
 
 const HORIZON_URL =
+  process.env.STELLAR_HORIZON_URL ||
   process.env.HORIZON_URL ||
-  (IS_TESTNET
-    ? "https://horizon-testnet.stellar.org"
-    : "https://horizon.stellar.org");
+  "https://horizon.stellar.org";
+
+// Comma-separated, priority-ordered list of Horizon URLs for failover.
+// When set, the HorizonFailoverClient will try each URL in order.
+// Falls back to HORIZON_URL (single-endpoint mode) when not set.
+const STELLAR_HORIZON_URLS = process.env.STELLAR_HORIZON_URLS
+  ? process.env.STELLAR_HORIZON_URLS.split(',').map((u) => u.trim()).filter(Boolean)
+  : [HORIZON_URL];
 
 // Optional — only used by the migration script to seed the default school
 const SCHOOL_WALLET_ADDRESS = process.env.SCHOOL_WALLET_ADDRESS || null;
@@ -61,6 +67,21 @@ const CONFIRMATION_THRESHOLD = parseInt(
   process.env.CONFIRMATION_THRESHOLD || "2",
   10,
 );
+
+// Finality threshold (issue #747): ledgers required beyond CONFIRMATION_THRESHOLD
+// before a payment is promoted from 'confirmed' to 'finalized' — the point at
+// which it is treated as practically irreversible and should never require
+// manual correction. Must be >= CONFIRMATION_THRESHOLD; defaults to 5x it.
+const FINALIZATION_THRESHOLD = parseInt(
+  process.env.FINALIZATION_THRESHOLD || String(CONFIRMATION_THRESHOLD * 5),
+  10,
+);
+if (FINALIZATION_THRESHOLD < CONFIRMATION_THRESHOLD) {
+  throw new Error(
+    "[Config] FINALIZATION_THRESHOLD must be >= CONFIRMATION_THRESHOLD.",
+  );
+}
+
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || "30000", 10);
 
 // SYNC_INTERVAL_MS is the canonical env var for auto-sync interval.
@@ -69,6 +90,12 @@ const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || "30000", 10);
 const _syncRaw =
   process.env.SYNC_INTERVAL_MS ?? process.env.POLL_INTERVAL_MS ?? "60000";
 const SYNC_INTERVAL_MS = parseInt(_syncRaw, 10);
+
+// How long a per-school sync lock is held before auto-expiring. Acts as the
+// crash-safety net for the distributed lock around each poll cycle: must
+// comfortably exceed the time it takes to poll a single school, but stay short
+// enough that a dead worker's lock frees up reasonably quickly. Default: 60s.
+const SYNC_LOCK_TTL_MS = parseInt(process.env.SYNC_LOCK_TTL_MS || "60000", 10);
 
 // ── Retry Service ─────────────────────────────────────────────────────────────
 const RETRY_INTERVAL_MS = parseInt(
@@ -113,14 +140,6 @@ const STELLAR_TIMEOUT_MS = parseInt(
 // Secret used to sign/verify admin JWTs.
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  throw new Error(
-    "[Config] Missing required environment variable: JWT_SECRET\n" +
-    "Generate one with: node -e \"console.log(require('crypto').randomBytes(64).toString('hex'))\"",
-  );
-}
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "8h";
-
-if (!JWT_SECRET) {
   if (process.env.NODE_ENV === 'production') {
     throw new Error(
       '[Config] JWT_SECRET is required in production. ' +
@@ -133,6 +152,7 @@ if (!JWT_SECRET) {
     );
   }
 }
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "8h";
 
 // ── Fee Reminders ─────────────────────────────────────────────────────────────
 // How often the scheduler checks for unpaid fees (default: 24 hours)
@@ -163,12 +183,15 @@ const config = Object.freeze({
   STELLAR_NETWORK,
   IS_TESTNET,
   HORIZON_URL,
+  STELLAR_HORIZON_URLS,
   SCHOOL_WALLET_ADDRESS,
   USDC_ISSUER,
   ACCEPTED_ASSET,
   CONFIRMATION_THRESHOLD,
+  FINALIZATION_THRESHOLD,
   POLL_INTERVAL_MS,
   SYNC_INTERVAL_MS,
+  SYNC_LOCK_TTL_MS,
   RETRY_INTERVAL_MS,
   RETRY_MAX_ATTEMPTS,
   MIN_PAYMENT_AMOUNT,

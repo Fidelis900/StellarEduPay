@@ -25,7 +25,7 @@
 const { Queue, Worker } = require('bullmq');
 const PendingVerification = require('../models/pendingVerificationModel');
 const logger = require('../utils/logger');
-const { getRedisClient, getRedisStatus } = require('../config/redisClient');
+const { resolveCorrelationId } = require('../utils/correlationId');
 
 const QUEUE_NAME = 'transaction-processing';
 
@@ -62,13 +62,15 @@ if (!connection) {
  * Uses upsert so duplicate calls for the same txHash are safe.
  */
 async function persistJob(txHash, context = {}) {
+  const schoolId = context.schoolId || 'unknown';
   await PendingVerification.findOneAndUpdate(
-    { txHash },
+    { txHash, schoolId },
     {
       $setOnInsert: {
         txHash,
-        schoolId: context.schoolId || 'unknown',
+        schoolId,
         studentId: context.studentId || null,
+        correlationId: resolveCorrelationId(context.correlationId, txHash),
         status: 'pending',
         attempts: 0,
         nextRetryAt: new Date(),
@@ -80,16 +82,19 @@ async function persistJob(txHash, context = {}) {
 
 /**
  * Mark a PendingVerification document as resolved (job completed successfully).
+ * Bypass is required: the worker has txHash but not schoolId; txHash is globally unique.
  */
 async function markResolved(txHash) {
   await PendingVerification.findOneAndUpdate(
     { txHash },
-    { status: 'resolved', resolvedAt: new Date() }
+    { status: 'resolved', resolvedAt: new Date() },
+    { _bypassTenantScope: true }
   );
 }
 
 /**
  * Mark a PendingVerification document as dead_letter (permanent failure).
+ * Bypass is required: the worker has txHash but not schoolId; txHash is globally unique.
  */
 async function markDead(txHash, error) {
   await PendingVerification.findOneAndUpdate(
@@ -97,7 +102,8 @@ async function markDead(txHash, error) {
     {
       status: 'dead_letter',
       lastError: error?.message || String(error),
-    }
+    },
+    { _bypassTenantScope: true }
   );
 }
 
@@ -115,26 +121,30 @@ async function markDead(txHash, error) {
  * @returns {Promise<Job|null>}
  */
 async function enqueueTransaction(txHash, context = {}) {
+  const correlationId = resolveCorrelationId(context.correlationId, txHash);
+  const enrichedContext = { ...context, correlationId };
+
   // 1. Persist to MongoDB (durable, idempotent)
-  await persistJob(txHash, context);
+  await persistJob(txHash, enrichedContext);
 
   // 2. Enqueue to BullMQ (best-effort)
   if (!transactionQueue) {
-    logger.warn('[TransactionQueue] BullMQ unavailable — job persisted to MongoDB only', { txHash });
+    logger.warn('[TransactionQueue] BullMQ unavailable — job persisted to MongoDB only', { txHash, correlationId });
     return null;
   }
 
   try {
     const job = await transactionQueue.add(
       'verify-transaction',
-      { txHash, ...context },
+      { txHash, ...enrichedContext },
       { jobId: txHash } // deduplicate by txHash
     );
-    logger.info('[TransactionQueue] Enqueued transaction', { txHash, jobId: job.id });
+    logger.info('[TransactionQueue] Enqueued transaction', { txHash, correlationId, jobId: job.id });
     return job;
   } catch (err) {
     logger.warn('[TransactionQueue] Redis enqueue failed — job persisted to MongoDB only', {
       txHash,
+      correlationId,
       error: err.message,
     });
     return null;
@@ -155,9 +165,10 @@ async function recoverPendingJobs() {
     return 0;
   }
 
+  // Startup recovery: intentionally spans all schools to re-queue unfinished jobs.
   const unresolved = await PendingVerification.find({
     status: { $in: ['pending', 'processing'] },
-  }).lean();
+  }).bypassTenantScope().lean();
 
   if (!unresolved.length) {
     logger.info('[TransactionQueue] No pending jobs to recover');
@@ -166,22 +177,25 @@ async function recoverPendingJobs() {
 
   let recovered = 0;
   for (const doc of unresolved) {
+    const correlationId = resolveCorrelationId(doc.correlationId, doc.txHash);
     try {
-      // Reset processing → pending so the worker picks it up fresh
+      // Reset processing → pending so the worker picks it up fresh.
+      // schoolId is known from the fetched doc, so no bypass needed here.
       await PendingVerification.findOneAndUpdate(
-        { txHash: doc.txHash, status: 'processing' },
+        { txHash: doc.txHash, schoolId: doc.schoolId, status: 'processing' },
         { status: 'pending' }
       );
 
       await transactionQueue.add(
         'verify-transaction',
-        { txHash: doc.txHash, schoolId: doc.schoolId, studentId: doc.studentId },
+        { txHash: doc.txHash, schoolId: doc.schoolId, studentId: doc.studentId, correlationId },
         { jobId: doc.txHash }
       );
       recovered++;
     } catch (err) {
       logger.error('[TransactionQueue] Failed to recover job', {
         txHash: doc.txHash,
+        correlationId,
         error: err.message,
       });
     }
@@ -204,6 +218,7 @@ async function getJobStatus(txHash) {
   return {
     jobId: job.id,
     txHash: job.data.txHash,
+    correlationId: job.data.correlationId || null,
     state,
     attemptsMade: job.attemptsMade,
     failedReason: job.failedReason || null,
@@ -234,12 +249,17 @@ function startTransactionWorker(processor) {
   });
 
   worker.on('completed', (job) =>
-    logger.info('[TransactionQueue] Job completed', { jobId: job.id, txHash: job.data.txHash })
+    logger.info('[TransactionQueue] Job completed', {
+      jobId: job.id,
+      txHash: job.data.txHash,
+      correlationId: job.data.correlationId || null,
+    })
   );
   worker.on('failed', (job, err) =>
     logger.error('[TransactionQueue] Job failed', {
       jobId: job?.id,
       txHash: job?.data?.txHash,
+      correlationId: job?.data?.correlationId || null,
       error: err.message,
     })
   );
@@ -251,11 +271,29 @@ function startTransactionWorker(processor) {
   return worker;
 }
 
+async function closeQueue() {
+  try {
+    if (transactionQueue) {
+      await transactionQueue.close();
+      transactionQueue = null;
+      logger.info('[TransactionQueue] Queue closed');
+    }
+
+    if (connection && typeof connection.quit === 'function') {
+      await connection.quit();
+      logger.info('[TransactionQueue] Redis connection closed');
+    }
+  } catch (err) {
+    logger.error('[TransactionQueue] Failed to close queue', { error: err.message });
+  }
+}
+
 module.exports = {
   transactionQueue,
   enqueueTransaction,
   getJobStatus,
   startTransactionWorker,
+  closeQueue,
   recoverPendingJobs,
   markResolved,
   markDead,

@@ -2,6 +2,7 @@
 
 const mongoose = require('mongoose');
 const softDelete = require('../utils/softDelete');
+const tenantScope = require('../plugins/tenantScope');
 
 const feeCategorySchema = new mongoose.Schema(
   {
@@ -61,6 +62,7 @@ const studentSchema = new mongoose.Schema(
 
 // Apply soft delete utility
 softDelete(studentSchema);
+studentSchema.plugin(tenantScope, { modelName: 'Student' });
 
 // isOverdue: true when a deadline is set, the fee is unpaid, and the deadline has passed
 studentSchema.virtual('isOverdue').get(function () {
@@ -91,7 +93,34 @@ studentSchema.index({ feePaid: 1, class: 1 });
 studentSchema.index({ totalPaid: 1 });
 studentSchema.index({ name: 'text', studentId: 'text' });
 
-studentSchema.pre('save', function (next) {
+studentSchema.pre('save', async function () {
+  // Archive overflow fee entries before computing totals.
+  // When the array exceeds STUDENT_FEE_HISTORY_CAP, the oldest entries are
+  // moved to StudentFeeHistory so the document stays compact.
+  const CAP = parseInt(process.env.STUDENT_FEE_HISTORY_CAP, 10) || 100;
+  if (this.fees && this.fees.length > CAP) {
+    const overflow = this.fees.length - CAP;
+    const toArchive = this.fees.splice(0, overflow);
+    try {
+      const StudentFeeHistory = require('./studentFeeHistoryModel');
+      await StudentFeeHistory.insertMany(
+        toArchive.map(fee => ({
+          schoolId:        this.schoolId,
+          studentId:       this.studentId,
+          category:        fee.category,
+          amount:          fee.amount,
+          paid:            fee.paid,
+          totalPaid:       fee.totalPaid,
+          remainingBalance:fee.remainingBalance,
+          paymentDeadline: fee.paymentDeadline,
+        }))
+      );
+    } catch (archiveErr) {
+      // Log but don't abort the save — active record integrity takes priority.
+      console.error('[StudentModel] Failed to archive fee history:', archiveErr.message);
+    }
+  }
+
   // Sync feeAmount with fees array for backward compatibility
   if (this.fees && this.fees.length > 0) {
     this.feeAmount = this.fees.reduce((sum, fee) => sum + (fee.amount || 0), 0);
@@ -107,7 +136,6 @@ studentSchema.pre('save', function (next) {
     this.remainingBalance = Math.max(0, this.feeAmount - this.totalPaid);
     this.feePaid = this.fees.every(fee => fee.paid);
   }
-  next();
 });
 
 module.exports = mongoose.model('Student', studentSchema);

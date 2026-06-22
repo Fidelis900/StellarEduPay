@@ -1,64 +1,50 @@
-"use strict";
+'use strict';
 
 /**
- * paymentController — all handlers are school-scoped.
+ * paymentController — core payment flow: instructions, intent, submit, verify.
  * req.school and req.schoolId are injected by resolveSchool middleware.
  */
 
-const crypto = require("crypto");
-const Payment = require("../models/paymentModel");
-const PaymentIntent = require("../models/paymentIntentModel");
-const Student = require("../models/studentModel");
-const PendingVerification = require("../models/pendingVerificationModel");
-const StellarSdk = require("@stellar/stellar-sdk");
+const crypto = require('crypto');
+const Payment = require('../models/paymentModel');
+const PaymentIntent = require('../models/paymentIntentModel');
+const Student = require('../models/studentModel');
+const StellarSdk = require('@stellar/stellar-sdk');
 
 const {
   verifyTransaction,
-  syncPaymentsForSchool,
   recordPayment,
-  finalizeConfirmedPayments,
   validatePaymentWithDynamicFee,
-} = require("../services/stellarService");
-const { queueForRetry } = require("../services/retryService");
-const {
-  enqueueTransaction,
-  getJobStatus,
-} = require("../queue/transactionQueue");
-const {
-  SCHOOL_WALLET,
-  ACCEPTED_ASSETS,
-  server,
-} = require("../config/stellarConfig");
-const { validateTransactionHash } = require("../utils/hashValidator");
-const { getPaymentLimits } = require("../utils/paymentLimits");
-const {
-  convertToLocalCurrency,
-  enrichPaymentWithConversion,
-} = require("../services/currencyConversionService");
-const { withStellarRetry } = require("../utils/withStellarRetry");
-const { logAudit } = require("../services/auditService");
+} = require('../services/stellarService');
+const { queueForRetry } = require('../services/retryService');
+const { server } = require('../config/stellarConfig');
+const { ACCEPTED_ASSETS } = require('../config/stellarConfig');
+const { validateTransactionHash } = require('../utils/hashValidator');
+const { getPaymentLimits, validatePaymentAmount } = require('../utils/paymentLimits');
+const { convertToLocalCurrency } = require('../services/currencyConversionService');
+const { withStellarRetry } = require('../utils/withStellarRetry');
+const { makePaymentAuditLogger } = require('../utils/paymentAuditLogger');
 
 // Permanent error codes that should NOT be retried
 const PERMANENT_FAIL_CODES = [
-  "TX_FAILED",
-  "MISSING_MEMO",
-  "INVALID_DESTINATION",
-  "UNSUPPORTED_ASSET",
-  "AMOUNT_TOO_LOW",
-  "AMOUNT_TOO_HIGH",
-  "UNDERPAID",
+  'TX_FAILED',
+  'MISSING_MEMO',
+  'INVALID_DESTINATION',
+  'UNSUPPORTED_ASSET',
+  'AMOUNT_TOO_LOW',
+  'AMOUNT_TOO_HIGH',
+  'UNDERPAID',
 ];
 
 function getExplorerUrl(txHash) {
   if (!txHash) return null;
-  const network =
-    process.env.STELLAR_NETWORK === "mainnet" ? "public" : "testnet";
+  const network = process.env.STELLAR_NETWORK === 'mainnet' ? 'public' : 'testnet';
   return `https://stellar.expert/explorer/${network}/tx/${txHash}`;
 }
 
 function wrapStellarError(err) {
   if (!err.code) {
-    err.code = "STELLAR_NETWORK_ERROR";
+    err.code = 'STELLAR_NETWORK_ERROR';
     err.message = `Stellar network error: ${err.message}`;
   }
   return err;
@@ -68,130 +54,83 @@ function wrapStellarError(err) {
 async function getPaymentInstructions(req, res, next) {
   try {
     const limits = getPaymentLimits();
-    const targetCurrency = req.school.localCurrency || "USD";
-    const { feeCategory } = req.query;
+    const targetCurrency = req.school.localCurrency || 'USD';
+    const { feeCategory, asset } = req.query;
 
-    const student = await Student.findOne({
-      schoolId: req.schoolId,
-      studentId: req.params.studentId,
-    });
+    if (asset) {
+      const assetCode = asset.split(':')[0];
+      if (!Object.keys(ACCEPTED_ASSETS).includes(assetCode)) {
+        const supportedAssets = Object.values(ACCEPTED_ASSETS).map((a) => ({ code: a.code, displayName: a.displayName }));
+        return res.status(400).json({ error: `Asset ${assetCode} is not accepted by this school`, code: 'ASSET_NOT_ACCEPTED', supportedAssets });
+      }
+    }
+
+    const student = await Student.findOne({ schoolId: req.schoolId, studentId: req.params.studentId });
 
     let feeAmount = student ? student.feeAmount : null;
     let feeConversion = null;
     let categoryInfo = null;
 
-    // If feeCategory is specified and student has fees array, use that category
-    if (feeCategory && student && student.fees && student.fees.length > 0) {
-      const fee = student.fees.find(f => f.category === feeCategory);
+    if (feeCategory && student?.fees?.length > 0) {
+      const fee = student.fees.find((f) => f.category === feeCategory);
       if (fee) {
         feeAmount = fee.amount;
-        categoryInfo = {
-          category: fee.category,
-          amount: fee.amount,
-          paid: fee.paid,
-          totalPaid: fee.totalPaid || 0,
-          remainingBalance: fee.remainingBalance || fee.amount,
-        };
+        categoryInfo = { category: fee.category, amount: fee.amount, paid: fee.paid, totalPaid: fee.totalPaid || 0, remainingBalance: fee.remainingBalance || fee.amount };
       }
     }
 
     if (feeAmount) {
-      feeConversion = await convertToLocalCurrency(
-        feeAmount,
-        "XLM",
-        targetCurrency,
-      );
+      feeConversion = await convertToLocalCurrency(feeAmount, 'XLM', targetCurrency);
     }
 
-    // Build fees array for response
-    const fees = student && student.fees && student.fees.length > 0
-      ? student.fees.map(f => ({
-        category: f.category,
-        amount: f.amount,
-        paid: f.paid,
-        totalPaid: f.totalPaid || 0,
-        remainingBalance: f.remainingBalance || f.amount,
-      }))
+    const fees = student?.fees?.length > 0
+      ? student.fees.map((f) => ({ category: f.category, amount: f.amount, paid: f.paid, totalPaid: f.totalPaid || 0, remainingBalance: f.remainingBalance || f.amount }))
       : [];
 
     res.json({
       walletAddress: req.school.stellarAddress,
       memo: req.params.studentId,
-      acceptedAssets: Object.values(ACCEPTED_ASSETS).map((a) => ({
-        code: a.code,
-        type: a.type,
-        displayName: a.displayName,
-        issuer: a.issuer ?? null,
-      })),
+      acceptedAssets: Object.values(ACCEPTED_ASSETS).map((a) => ({ code: a.code, type: a.type, displayName: a.displayName, issuer: a.issuer ?? null })),
       paymentLimits: { min: limits.min, max: limits.max },
       feeAmount,
       feeCategory: feeCategory || null,
       categoryInfo,
       fees,
       feeLocalEquivalent: feeConversion?.available
-        ? {
-          amount: feeConversion.localAmount,
-          currency: feeConversion.currency,
-          rate: feeConversion.rate,
-          rateTimestamp: feeConversion.rateTimestamp,
-        }
+        ? { amount: feeConversion.localAmount, currency: feeConversion.currency, rate: feeConversion.rate, rateTimestamp: feeConversion.rateTimestamp }
         : null,
-      note: "Include the payment intent memo exactly when sending payment. The memo must be sent as a text memo (MEMO_TEXT). Other memo types (MEMO_ID, MEMO_HASH, MEMO_RETURN) will not be recognised and your payment will not be matched.",
-      memoType: "text",
+      note: 'Include the payment intent memo exactly when sending payment. The memo must be sent as a text memo (MEMO_TEXT). Other memo types (MEMO_ID, MEMO_HASH, MEMO_RETURN) will not be recognised and your payment will not be matched.',
+      memoType: 'text',
     });
   } catch (err) {
     next(err);
   }
 }
 
-// ====================== DYNAMIC FEE INTEGRATION ======================
+// ====================== PAYMENT INTENT ======================
 async function createPaymentIntent(req, res, next) {
   try {
     const { schoolId } = req;
     const { studentId, feeCategory } = req.body;
 
     const student = await Student.findOne({ schoolId, studentId });
-    if (!student)
-      return res
-        .status(404)
-        .json({ error: "Student not found", code: "NOT_FOUND" });
+    if (!student) return res.status(404).json({ error: 'Student not found', code: 'NOT_FOUND' });
 
     let feeAmount = student.feeAmount;
     let categoryInfo = null;
 
-    // If feeCategory is specified and student has fees array, use that category
-    if (feeCategory && student.fees && student.fees.length > 0) {
-      const fee = student.fees.find(f => f.category === feeCategory);
-      if (fee) {
-        feeAmount = fee.amount;
-        categoryInfo = {
-          category: fee.category,
-          amount: fee.amount,
-          paid: fee.paid,
-          totalPaid: fee.totalPaid || 0,
-          remainingBalance: fee.remainingBalance || fee.amount,
-        };
-      } else {
-        return res.status(400).json({
-          error: `Fee category '${feeCategory}' not found for student`,
-          code: "INVALID_FEE_CATEGORY",
-        });
-      }
+    if (feeCategory && student.fees?.length > 0) {
+      const fee = student.fees.find((f) => f.category === feeCategory);
+      if (!fee) return res.status(400).json({ error: `Fee category '${feeCategory}' not found for student`, code: 'INVALID_FEE_CATEGORY' });
+      feeAmount = fee.amount;
+      categoryInfo = { category: fee.category, amount: fee.amount, paid: fee.paid, totalPaid: fee.totalPaid || 0, remainingBalance: fee.remainingBalance || fee.amount };
     }
 
-    const { validatePaymentAmount } = require("../utils/paymentLimits");
     const limitValidation = validatePaymentAmount(feeAmount);
-    if (!limitValidation.valid) {
-      return res.status(400).json({
-        error: limitValidation.error,
-        code: limitValidation.code,
-      });
-    }
+    if (!limitValidation.valid) return res.status(400).json({ error: limitValidation.error, code: limitValidation.code });
 
-    const memo = crypto.randomBytes(4).toString("hex").toUpperCase();
-    const ttlMs =
-      parseInt(process.env.PAYMENT_INTENT_TTL_MS, 10) || 24 * 60 * 60 * 1000;
-    const expiresAt = new Date(Date.now() + ttlMs);
+    const memo = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const ttlMs = parseInt(process.env.PAYMENT_INTENT_TTL_MS, 10) || 24 * 60 * 60 * 1000;
 
     const intent = await PaymentIntent.create({
       schoolId,
@@ -199,34 +138,25 @@ async function createPaymentIntent(req, res, next) {
       amount: feeAmount,
       feeCategory: feeCategory || null,
       memo,
-      status: "PENDING",
-      expiresAt,
+      status: 'pending',
+      expiresAt: new Date(Date.now() + ttlMs),
       startedAt: new Date(),
     });
 
-    res.status(201).json({
-      ...intent.toObject(),
-      categoryInfo,
-    });
+    res.status(201).json({ ...intent.toObject(), categoryInfo });
   } catch (err) {
     next(err);
   }
 }
 
-// ====================== MAIN PAGINATED ENDPOINT (Improved) ======================
-// POST /api/payments/submit  (Step 2 & 3: Submit and Track XDR)
+// ====================== SUBMIT XDR TRANSACTION ======================
 async function submitTransaction(req, res, next) {
   try {
     const { xdr } = req.body;
-    if (!xdr) {
-      return res.status(400).json({ error: "Missing xdr parameter" });
-    }
+    if (!xdr) return res.status(400).json({ error: 'Missing xdr parameter' });
 
-    const tx = new StellarSdk.Transaction(
-      xdr,
-      require("../config/stellarConfig").networkPassphrase,
-    );
-    const transactionHash = tx.hash().toString("hex");
+    const tx = new StellarSdk.Transaction(xdr, require('../config/stellarConfig').networkPassphrase);
+    const transactionHash = tx.hash().toString('hex');
 
     const hashValidation = validateTransactionHash(transactionHash);
     if (!hashValidation.valid) {
@@ -237,184 +167,91 @@ async function submitTransaction(req, res, next) {
 
     const normalizedHash = hashValidation.normalized;
     const memo = tx.memo.value ? tx.memo.value.toString() : null;
+    if (!memo) return res.status(400).json({ error: 'Transaction must include the student ID as a memo' });
 
-    if (!memo) {
-      return res
-        .status(400)
-        .json({ error: "Transaction must include the student ID as a memo" });
-    }
-
-    let paymentRecord = await Payment.findOne({ schoolId: req.schoolId, memo, status: "PENDING" }).sort(
-      { createdAt: -1 },
-    );
+    let paymentRecord = await Payment.findOne({ schoolId: req.schoolId, memo, status: 'PENDING' }).sort({ createdAt: -1 });
     if (!paymentRecord) {
       const studentObj = await Student.findOne({ schoolId: req.schoolId, studentId: memo });
-      if (!studentObj) {
-        return res.status(404).json({
-          error:
-            "Associated student not found in the database. Cannot process transaction.",
-        });
-      }
-      paymentRecord = new Payment({
-        schoolId: req.schoolId,
-        studentId: studentObj.studentId || memo,
-        memo,
-        amount: 0,
-      });
+      if (!studentObj) return res.status(404).json({ error: 'Associated student not found in the database. Cannot process transaction.' });
+      paymentRecord = new Payment({ schoolId: req.schoolId, studentId: studentObj.studentId || memo, memo, amount: 0 });
     }
 
     paymentRecord.transactionHash = normalizedHash;
-    paymentRecord.status = "SUBMITTED";
+    paymentRecord.status = 'SUBMITTED';
     paymentRecord.submittedAt = new Date();
     await paymentRecord.save();
 
     let txResponse;
     try {
-      // Step 3: Send to the Stellar network (with retry for transient failures)
-      txResponse = await withStellarRetry(() => server.submitTransaction(tx), {
-        label: "submitTransaction",
-      });
+      txResponse = await withStellarRetry(() => server.submitTransaction(tx), { label: 'submitTransaction' });
     } catch (err) {
-      paymentRecord.status = "FAILED";
-      let errorReason = err.message;
-      if (err.response && err.response.data && err.response.data.extras) {
-        errorReason = err.response.data.extras.result_codes.transaction;
-      }
-      paymentRecord.suspicionReason = errorReason;
+      paymentRecord.status = 'FAILED';
+      paymentRecord.suspicionReason = err.response?.data?.extras?.result_codes?.transaction ?? err.message;
       await paymentRecord.save();
-      return res
-        .status(400)
-        .json({ error: "Transaction submission failed", code: errorReason });
+      return res.status(400).json({ error: 'Transaction submission failed', code: paymentRecord.suspicionReason });
     }
 
-    // Verify the response indicates success on-chain
     if (!txResponse.successful) {
-      paymentRecord.status = "FAILED";
-      paymentRecord.confirmationStatus = "failed";
-      paymentRecord.suspicionReason =
-        "Transaction was included in ledger but failed on-chain";
+      paymentRecord.status = 'FAILED';
+      paymentRecord.confirmationStatus = 'failed';
+      paymentRecord.suspicionReason = 'Transaction was included in ledger but failed on-chain';
       await paymentRecord.save();
-      return res.status(400).json({
-        error: "Transaction was included in the ledger but failed on-chain",
-        code: "TX_FAILED",
-        hash: transactionHash,
-      });
+      return res.status(400).json({ error: 'Transaction was included in the ledger but failed on-chain', code: 'TX_FAILED', hash: transactionHash });
     }
 
-    // Success
-    paymentRecord.status = "SUCCESS";
+    paymentRecord.status = 'SUCCESS';
     paymentRecord.confirmedAt = new Date();
     paymentRecord.ledgerSequence = txResponse.ledger;
-    // (Amount should be extracted from operations, but verifyTransaction does that better)
     await paymentRecord.save();
 
-    const submitNetwork =
-      process.env.STELLAR_NETWORK === "mainnet" ? "public" : "testnet";
+    const network = process.env.STELLAR_NETWORK === 'mainnet' ? 'public' : 'testnet';
     res.json({
       verified: true,
       hash: normalizedHash,
       ledger: txResponse.ledger,
-      status: "SUCCESS",
-      status: "SUCCESS",
-      explorerUrl: `https://stellar.expert/explorer/${submitNetwork}/tx/${transactionHash}`,
+      status: 'SUCCESS',
+      explorerUrl: `https://stellar.expert/explorer/${network}/tx/${transactionHash}`,
     });
   } catch (err) {
     next(err);
   }
 }
 
-/**
- * POST /api/payments/verify
- *
- * Accepts a Stellar transaction hash, queries the Stellar network to verify
- * the payment, records it if valid, and returns the verification result.
- *
- * Request body: { txHash: string }  — 64-char hex string (validated by middleware)
- *
- * Error responses follow the global error handler format:
- *   { error: string, code: string }
- *   400 — TX_FAILED | MISSING_MEMO | INVALID_DESTINATION | UNSUPPORTED_ASSET | AMOUNT_TOO_LOW | AMOUNT_TOO_HIGH
- *   409 — DUPLICATE_TX
- *   404 — transaction not found / no valid payment
- *   502 — STELLAR_NETWORK_ERROR
- */
+// ====================== VERIFY PAYMENT ======================
 async function verifyPayment(req, res, next) {
   const startTime = Date.now();
-  const ipAddress = req.ip || req.connection?.remoteAddress || null;
-  const userAgent = req.get('user-agent') || null;
-  
+
   try {
     const { schoolId } = req;
     const { txHash } = req.body;
 
-    // Validate txHash presence before any further processing.
-    // validateTransactionHash(undefined) produces a confusing error;
-    // this guard returns a clear 400 with VALIDATION_ERROR instead.
     if (!txHash) {
-      await logAudit({
-        schoolId,
-        action: 'payment_verify',
-        performedBy: req.user?.email || req.user?.id || 'anonymous',
-        targetId: `missing-tx:${schoolId}`,
-        targetType: 'payment',
-        details: { error: 'txHash is required', receivedKeys: Object.keys(req.body || {}) },
-        result: 'failure',
-        errorMessage: 'txHash is required',
-        ipAddress,
-        userAgent,
-      });
+      const audit = makePaymentAuditLogger(req, schoolId, `missing-tx:${schoolId}`);
+      await audit.failure('txHash is required', { receivedKeys: Object.keys(req.body || {}) });
       return res.status(400).json({ error: 'txHash is required', code: 'VALIDATION_ERROR' });
     }
 
     const hashValidation = validateTransactionHash(txHash);
     if (!hashValidation.valid) {
-      // Log failed validation attempt
-      await logAudit({
-        schoolId,
-        action: 'payment_verify',
-        performedBy: req.user?.email || req.user?.id || 'anonymous',
-        targetId: txHash,
-        targetType: 'payment',
-        details: { txHash, validationError: hashValidation.error },
-        result: 'failure',
-        errorMessage: hashValidation.error,
-        ipAddress,
-        userAgent,
-      });
-      
+      const audit = makePaymentAuditLogger(req, schoolId, txHash);
+      await audit.failure(hashValidation.error, { txHash, validationError: hashValidation.error });
       const err = new Error(hashValidation.error);
       err.code = hashValidation.code;
       return next(err);
     }
 
     const normalizedHash = hashValidation.normalized;
+    const audit = makePaymentAuditLogger(req, schoolId, normalizedHash);
 
-    // Check if payment already exists (idempotency)
+    // Idempotency — return cached result if already recorded
     const existing = await Payment.findOne({ schoolId, txHash: normalizedHash });
     if (existing) {
-      // Log cached verification
-      await logAudit({
-        schoolId,
-        action: 'payment_verify',
-        performedBy: req.user?.email || req.user?.id || 'anonymous',
-        targetId: normalizedHash,
-        targetType: 'payment',
-        details: { txHash: normalizedHash, cached: true, studentId: existing.studentId, amount: existing.amount },
-        result: 'success',
-        ipAddress,
-        userAgent,
-      });
-      
-      // Return cached result instead of error
-      const targetCurrency = req.school.localCurrency || "USD";
-      const conversion = await convertToLocalCurrency(
-        existing.amount,
-        existing.assetCode || "XLM",
-        targetCurrency,
-      );
+      await audit.success({ txHash: normalizedHash, cached: true, studentId: existing.studentId, amount: existing.amount });
 
+      const targetCurrency = req.school.localCurrency || 'USD';
+      const conversion = await convertToLocalCurrency(existing.amount, existing.assetCode || 'XLM', targetCurrency);
       const stellarExplorerUrl = getExplorerUrl(existing.txHash);
-      
+
       return res.json({
         verified: true,
         cached: true,
@@ -427,10 +264,7 @@ async function verifyPayment(req, res, next) {
         assetCode: existing.assetCode,
         assetType: existing.assetType,
         feeAmount: existing.feeAmount,
-        feeValidation: {
-          status: existing.feeValidationStatus,
-          excessAmount: existing.excessAmount,
-        },
+        feeValidation: { status: existing.feeValidationStatus, excessAmount: existing.excessAmount },
         networkFee: existing.networkFee || null,
         date: existing.confirmedAt || existing.createdAt,
         status: existing.status,
@@ -447,163 +281,51 @@ async function verifyPayment(req, res, next) {
 
     let result;
     try {
-      result = await verifyTransaction(
-        normalizedHash,
-        req.school.stellarAddress,
-      );
+      result = await verifyTransaction(normalizedHash, req.school.stellarAddress);
     } catch (stellarErr) {
       if (PERMANENT_FAIL_CODES.includes(stellarErr.code)) {
-        // Log permanent failure
-        await logAudit({
-          schoolId,
-          action: 'payment_verify',
-          performedBy: req.user?.email || req.user?.id || 'anonymous',
-          targetId: normalizedHash,
-          targetType: 'payment',
-          details: { txHash: normalizedHash, errorCode: stellarErr.code },
-          result: 'failure',
-          errorMessage: stellarErr.message,
-          ipAddress,
-          userAgent,
-        });
-        
-        await Payment.create({
-          schoolId,
-          studentId: "unknown",
-          txHash: normalizedHash,
-          amount: 0,
-          status: "FAILED",
-          feeValidationStatus: "unknown",
-        }).catch(() => { });
+        await audit.failure(stellarErr.message, { txHash: normalizedHash, errorCode: stellarErr.code });
+        await Payment.create({ schoolId, studentId: 'unknown', txHash: normalizedHash, amount: 0, status: 'FAILED', feeValidationStatus: 'unknown' }).catch(() => {});
         return next(stellarErr);
       }
 
-      // Log queued for retry
-      await logAudit({
-        schoolId,
-        action: 'payment_verify',
-        performedBy: req.user?.email || req.user?.id || 'anonymous',
-        targetId: normalizedHash,
-        targetType: 'payment',
-        details: { txHash: normalizedHash, queuedForRetry: true, reason: stellarErr.message },
-        result: 'success',
-        ipAddress,
-        userAgent,
-      });
-      
-      await queueForRetry(
-        normalizedHash,
-        req.body.studentId || null,
-        stellarErr.message,
-        schoolId,
-      );
+      await audit.success({ txHash: normalizedHash, queuedForRetry: true, reason: stellarErr.message });
+      await queueForRetry(normalizedHash, req.body.studentId || null, stellarErr.message, schoolId);
       return res.status(202).json({
-        message:
-          "Stellar network is temporarily unavailable. Your transaction has been queued and will be verified automatically.",
+        message: 'Stellar network is temporarily unavailable. Your transaction has been queued and will be verified automatically.',
         txHash: normalizedHash,
-        status: "queued_for_retry",
+        status: 'queued_for_retry',
       });
     }
 
     if (!result) {
-      // Log not found
-      await logAudit({
-        schoolId,
-        action: 'payment_verify',
-        performedBy: req.user?.email || req.user?.id || 'anonymous',
-        targetId: normalizedHash,
-        targetType: 'payment',
-        details: { txHash: normalizedHash },
-        result: 'failure',
-        errorMessage: 'Transaction found but contains no valid payment to this school wallet',
-        ipAddress,
-        userAgent,
-      });
-      
-      return res.status(404).json({
-        error:
-          "Transaction found but contains no valid payment to this school wallet",
-        code: "NOT_FOUND",
-      });
+      await audit.failure('Transaction found but contains no valid payment to this school wallet', { txHash: normalizedHash });
+      return res.status(404).json({ error: 'Transaction found but contains no valid payment to this school wallet', code: 'NOT_FOUND' });
     }
 
     const studentStrId = result.studentId || result.memo;
     const studentObj = await Student.findOne({ schoolId, studentId: studentStrId });
     if (!studentObj) {
-      // Log student not found
-      await logAudit({
-        schoolId,
-        action: 'payment_verify',
-        performedBy: req.user?.email || req.user?.id || 'anonymous',
-        targetId: normalizedHash,
-        targetType: 'payment',
-        details: { txHash: normalizedHash, studentId: studentStrId },
-        result: 'failure',
-        errorMessage: 'Associated student not found',
-        ipAddress,
-        userAgent,
-      });
-      
-      return res.status(404).json({
-        error: "Associated student not found. Cannot record transaction.",
-      });
+      await audit.failure('Associated student not found', { txHash: normalizedHash, studentId: studentStrId });
+      return res.status(404).json({ error: 'Associated student not found. Cannot record transaction.' });
     }
 
     const intent = await PaymentIntent.findOne({ memo: result.memo, schoolId });
-    if (intent && intent.expiresAt && intent.expiresAt < new Date()) {
-      await PaymentIntent.findByIdAndUpdate(intent._id, { status: "expired" });
-      
-      // Log expired intent
-      await logAudit({
-        schoolId,
-        action: 'payment_verify',
-        performedBy: req.user?.email || req.user?.id || 'anonymous',
-        targetId: normalizedHash,
-        targetType: 'payment',
-        details: { txHash: normalizedHash, intentExpired: true },
-        result: 'failure',
-        errorMessage: 'Payment intent has expired',
-        ipAddress,
-        userAgent,
-      });
-      
-      const err = new Error(
-        "Payment intent has expired. Please request new payment instructions.",
-      );
-      err.code = "INTENT_EXPIRED";
+    if (intent?.expiresAt && intent.expiresAt < new Date()) {
+      await PaymentIntent.findByIdAndUpdate(intent._id, { status: 'expired' });
+      await audit.failure('Payment intent has expired', { txHash: normalizedHash, intentExpired: true });
+      const err = new Error('Payment intent has expired. Please request new payment instructions.');
+      err.code = 'INTENT_EXPIRED';
       err.status = 410;
       return next(err);
     }
 
-    if (result.feeValidation.status === "underpaid") {
-      // Log underpayment
-      await logAudit({
-        schoolId,
-        action: 'payment_verify',
-        performedBy: req.user?.email || req.user?.id || 'anonymous',
-        targetId: normalizedHash,
-        targetType: 'payment',
-        details: { 
-          txHash: normalizedHash, 
-          studentId: studentStrId,
-          amount: result.amount,
-          required: result.feeAmount,
-          underpaid: true 
-        },
-        result: 'failure',
-        errorMessage: result.feeValidation.message,
-        ipAddress,
-        userAgent,
-      });
-      
+    if (result.feeValidation.status === 'underpaid') {
+      await audit.failure(result.feeValidation.message, { txHash: normalizedHash, studentId: studentStrId, amount: result.amount, required: result.feeAmount, underpaid: true });
       const err = new Error(result.feeValidation.message);
-      err.code = "UNDERPAID";
+      err.code = 'UNDERPAID';
       err.status = 400;
-      err.details = {
-        paid: result.amount,
-        required: result.feeAmount,
-        shortfall: parseFloat((result.feeAmount - result.amount).toFixed(7)),
-      };
+      err.details = { paid: result.amount, required: result.feeAmount, shortfall: parseFloat((result.feeAmount - result.amount).toFixed(7)) };
       return next(err);
     }
 
@@ -617,37 +339,26 @@ async function verifyPayment(req, res, next) {
       feeValidationStatus: result.feeValidation.status,
       excessAmount: result.feeValidation.excessAmount,
       networkFee: result.networkFee,
-      status: "SUCCESS",
+      status: 'SUCCESS',
       memo: result.memo,
       senderAddress: result.senderAddress || null,
       ledgerSequence: result.ledger || null,
-      confirmationStatus: "confirmed",
+      confirmationStatus: 'confirmed',
       confirmedAt: result.date ? new Date(result.date) : now,
       verifiedAt: now,
     });
 
-    // Log successful verification
-    const duration = Date.now() - startTime;
-    await logAudit({
-      schoolId,
-      action: 'payment_verify',
-      performedBy: req.user?.email || req.user?.id || 'anonymous',
-      targetId: normalizedHash,
-      targetType: 'payment',
-      details: { 
-        txHash: normalizedHash,
-        studentId: result.studentId || result.memo,
-        amount: result.amount,
-        assetCode: result.assetCode || 'XLM',
-        feeValidationStatus: result.feeValidation.status,
-        duration: `${duration}ms`
-      },
-      result: 'success',
-      ipAddress,
-      userAgent,
+    await audit.success({
+      txHash: normalizedHash,
+      studentId: result.studentId || result.memo,
+      amount: result.amount,
+      assetCode: result.assetCode || 'XLM',
+      feeValidationStatus: result.feeValidation.status,
+      duration: `${Date.now() - startTime}ms`,
     });
 
-    // Auto-generate receipt on payment success (fire-and-forget; never blocks the response)
+    // Auto-generate receipt (fire-and-forget)
+    const { createReceipt } = require('../services/receiptService');
     createReceipt({
       txHash: result.hash,
       studentId: result.studentId || result.memo,
@@ -658,16 +369,12 @@ async function verifyPayment(req, res, next) {
       feeValidationStatus: result.feeValidation.status,
       memo: result.memo,
       confirmedAt: result.date ? new Date(result.date) : now,
-    }).catch(() => { /* receipt failure must not break the payment response */ });
+    }).catch(() => {});
 
-    const targetCurrency = req.school.localCurrency || "USD";
-    const conversion = await convertToLocalCurrency(
-      result.amount,
-      result.assetCode || "XLM",
-      targetCurrency,
-    );
-
+    const targetCurrency = req.school.localCurrency || 'USD';
+    const conversion = await convertToLocalCurrency(result.amount, result.assetCode || 'XLM', targetCurrency);
     const stellarExplorerUrl = getExplorerUrl(result.hash);
+
     res.json({
       verified: true,
       cached: false,
@@ -692,29 +399,18 @@ async function verifyPayment(req, res, next) {
       },
     });
   } catch (err) {
-    // Log unexpected errors
-    await logAudit({
-      schoolId: req.schoolId,
-      action: 'payment_verify',
-      performedBy: req.user?.email || req.user?.id || 'anonymous',
-      targetId: req.body?.txHash || 'unknown',
-      targetType: 'payment',
-      details: { error: err.message, stack: err.stack },
-      result: 'failure',
-      errorMessage: err.message,
-      ipAddress,
-      userAgent,
-    }).catch(() => { /* audit failure must not block error handling */ });
-    
+    await makePaymentAuditLogger(req, req.schoolId, req.body?.txHash || 'unknown')
+      .failure(err.message, { error: err.message })
+      .catch(() => {});
     next(err);
   }
 }
+
+// ====================== VERIFY TX HASH (no school context) ======================
 async function verifyTransactionHash(req, res, next) {
   try {
     const { txHash } = req.params;
-
     const tx = await server.transactions().transaction(txHash).call();
-
     res.json({
       hash: tx.hash,
       successful: tx.successful,
@@ -726,922 +422,20 @@ async function verifyTransactionHash(req, res, next) {
       operations_count: tx.operation_count,
     });
   } catch (err) {
-    if (err.response && err.response.status === 404) {
-      return res
-        .status(404)
-        .json({ error: "Transaction not found", code: "NOT_FOUND" });
-    }
+    if (err.response?.status === 404) return res.status(404).json({ error: 'Transaction not found', code: 'NOT_FOUND' });
     next(wrapStellarError(err));
-  }
-}
-
-const _syncLocks = new Set();
-
-async function syncAllPayments(req, res, next) {
-  const schoolId = req.schoolId;
-  if (_syncLocks.has(schoolId)) {
-    return res.status(409).json({ error: "Sync already in progress", code: "SYNC_IN_PROGRESS" });
-  }
-  _syncLocks.add(schoolId);
-  try {
-    const summary = await syncPaymentsForSchool(req.school);
-
-    // Audit log
-    if (req.auditContext) {
-      await logAudit({
-        schoolId,
-        action: 'payment_manual_sync',
-        performedBy: req.auditContext.performedBy,
-        targetId: schoolId,
-        targetType: 'payment',
-        details: { syncResult: summary },
-        result: 'success',
-        ipAddress: req.auditContext.ipAddress,
-        userAgent: req.auditContext.userAgent,
-      });
-    }
-
-    res.json({
-      message: "Sync complete",
-      summary: {
-        found:           summary.found,
-        new:             summary.new,
-        matched:         summary.matched,
-        unmatched:       summary.unmatched,
-        failed:          summary.failed,
-        alreadyProcessed: summary.alreadyProcessed,
-        failedDetails:   summary.failedDetails,
-      },
-    });
-  } catch (err) {
-    // Audit log for failure
-    if (req.auditContext) {
-      await logAudit({
-        schoolId,
-        action: 'payment_manual_sync',
-        performedBy: req.auditContext.performedBy,
-        targetId: schoolId,
-        targetType: 'payment',
-        details: {},
-        result: 'failure',
-        errorMessage: err.message,
-        ipAddress: req.auditContext.ipAddress,
-        userAgent: req.auditContext.userAgent,
-      });
-    }
-    next(wrapStellarError(err));
-  } finally {
-    _syncLocks.delete(schoolId);
-  }
-}
-
-async function getSyncStatus(req, res, next) {
-  try {
-    const SystemConfig = require("../models/systemConfigModel");
-    const lastSyncAt = await SystemConfig.get(`lastSyncAt:${req.schoolId}`);
-    res.json({
-      lastSyncAt: lastSyncAt || null,
-      status: lastSyncAt ? "synced" : "never_synced",
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function finalizePayments(req, res, next) {
-  try {
-    const result = await finalizeConfirmedPayments(req.schoolId);
-
-    // Audit log
-    if (req.auditContext) {
-      await logAudit({
-        schoolId: req.schoolId,
-        action: 'payment_finalize',
-        performedBy: req.auditContext.performedBy,
-        targetId: req.schoolId,
-        targetType: 'payment',
-        details: { finalizeResult: result },
-        result: 'success',
-        ipAddress: req.auditContext.ipAddress,
-        userAgent: req.auditContext.userAgent,
-      });
-    }
-
-    res.json({ message: "Finalization complete" });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function getStudentPayments(req, res, next) {
-  try {
-    const targetCurrency = req.school.localCurrency || "USD";
-    const network =
-      process.env.STELLAR_NETWORK === "mainnet" ? "public" : "testnet";
-
-    // Return 404 if the student has been deleted
-    const student = await Student.findOne({
-      schoolId: req.schoolId,
-      studentId: req.params.studentId,
-    });
-    if (!student) {
-      return res.status(404).json({ error: "Student not found", code: "NOT_FOUND" });
-    }
-
-    // Pagination parameters
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-    const skip = (page - 1) * limit;
-
-    // Get total count for pagination metadata
-    const total = await Payment.countDocuments({
-      schoolId: req.schoolId,
-      studentId: req.params.studentId,
-      deletedAt: null,
-    });
-
-    const payments = await Payment.find({
-      schoolId: req.schoolId,
-      studentId: req.params.studentId,
-      deletedAt: null,
-    })
-      .sort({ confirmedAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
-
-    const enriched = await Promise.all(
-      payments.map(async (p) => {
-        const hash = p.transactionHash || p.txHash;
-        const explorerUrl = hash
-          ? `https://stellar.expert/explorer/${network}/tx/${hash}`
-          : null;
-        const converted = await enrichPaymentWithConversion(p, targetCurrency);
-        return { ...converted, explorerUrl };
-      }),
-    );
-
-    const pages = Math.ceil(total / limit);
-
-    res.json({
-      payments: enriched,
-      total,
-      page,
-      pages,
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-
-// Compute once at startup — changes only when stellarConfig changes.
-const _acceptedAssetsBody = JSON.stringify({
-  assets: Object.values(ACCEPTED_ASSETS).map((a) => ({
-    code: a.code,
-    type: a.type,
-    displayName: a.displayName,
-  })),
-});
-const _acceptedAssetsETag = `"${crypto.createHash('sha1').update(_acceptedAssetsBody).digest('hex')}"`;
-
-async function getAcceptedAssets(req, res, next) {
-  try {
-    res.set('Cache-Control', 'public, max-age=3600');
-    res.set('ETag', _acceptedAssetsETag);
-
-    if (req.headers['if-none-match'] === _acceptedAssetsETag) {
-      return res.status(304).end();
-    }
-
-    res.type('json').send(_acceptedAssetsBody);
-  } catch (err) {
-    next(err);
-  }
-}
-
-// GET /api/payments/limits
-async function getPaymentLimitsEndpoint(req, res, next) {
-  try {
-    const limits = getPaymentLimits();
-    res.json({
-      min: limits.min,
-      max: limits.max,
-      message: `Payment amounts must be between ${limits.min} and ${limits.max}`,
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function getOverpayments(req, res, next) {
-  try {
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-    const skip = (page - 1) * limit;
-
-    const filter = { schoolId: req.schoolId, feeValidationStatus: "overpaid" };
-    const [total, overpayments] = await Promise.all([
-      Payment.countDocuments(filter),
-      Payment.find(filter).sort({ confirmedAt: -1 }).skip(skip).limit(limit),
-    ]);
-
-    const totalExcess = overpayments.reduce(
-      (sum, p) => sum + (p.excessAmount || 0),
-      0,
-    );
-    res.json({
-      count: overpayments.length,
-      totalExcess,
-      overpayments,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function getStudentBalance(req, res, next) {
-  try {
-    const { schoolId } = req;
-    const { studentId } = req.params;
-
-    const student = await Student.findOne({ schoolId, studentId });
-    if (!student)
-      return res
-        .status(404)
-        .json({ error: "Student not found", code: "NOT_FOUND" });
-
-    const result = await Payment.aggregate([
-      { $match: { schoolId, studentId, deletedAt: null } },
-      {
-        $group: {
-          _id: null,
-          totalPaid: { $sum: "$amount" },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const totalPaid = result.length
-      ? parseFloat(result[0].totalPaid.toFixed(7))
-      : 0;
-    const remainingBalance = parseFloat(
-      Math.max(0, student.feeAmount - totalPaid).toFixed(7),
-    );
-    const excessAmount =
-      totalPaid > student.feeAmount
-        ? parseFloat((totalPaid - student.feeAmount).toFixed(7))
-        : 0;
-
-    const targetCurrency = req.school.localCurrency || "USD";
-    const [feeConv, paidConv, remainingConv] = await Promise.all([
-      convertToLocalCurrency(student.feeAmount, "XLM", targetCurrency),
-      convertToLocalCurrency(totalPaid, "XLM", targetCurrency),
-      convertToLocalCurrency(remainingBalance, "XLM", targetCurrency),
-    ]);
-
-    const buildLocal = (conv) =>
-      conv.available
-        ? {
-          amount: conv.localAmount,
-          currency: conv.currency,
-          rate: conv.rate,
-          rateTimestamp: conv.rateTimestamp,
-        }
-        : null;
-
-    // Build per-category breakdown if fees array exists
-    let categoryBreakdown = [];
-    if (student.fees && student.fees.length > 0) {
-      // Get payments grouped by fee category
-      const categoryPayments = await Payment.aggregate([
-        { $match: { schoolId, studentId, feeCategory: { $ne: null }, deletedAt: null } },
-        {
-          $group: {
-            _id: "$feeCategory",
-            totalPaid: { $sum: "$amount" },
-            count: { $sum: 1 },
-          },
-        },
-      ]);
-
-      const categoryPaymentMap = {};
-      categoryPayments.forEach(cp => {
-        categoryPaymentMap[cp._id] = {
-          totalPaid: parseFloat(cp.totalPaid.toFixed(7)),
-          installmentCount: cp.count,
-        };
-      });
-
-      categoryBreakdown = student.fees.map(fee => {
-        const paid = categoryPaymentMap[fee.category] || { totalPaid: 0, installmentCount: 0 };
-        const remaining = Math.max(0, fee.amount - paid.totalPaid);
-        return {
-          category: fee.category,
-          amount: fee.amount,
-          totalPaid: paid.totalPaid,
-          remainingBalance: remaining,
-          paid: paid.totalPaid >= fee.amount,
-          installmentCount: paid.installmentCount,
-          paymentDeadline: fee.paymentDeadline,
-        };
-      });
-    }
-
-    res.json({
-      studentId,
-      feeAmount: student.feeAmount,
-      totalPaid,
-      remainingBalance,
-      excessAmount,
-      feePaid: totalPaid >= student.feeAmount,
-      installmentCount: result.length ? result[0].count : 0,
-      categoryBreakdown,
-      localCurrency: {
-        currency: targetCurrency,
-        available: feeConv.available,
-        rateTimestamp: feeConv.rateTimestamp,
-        feeAmount: buildLocal(feeConv),
-        totalPaid: buildLocal(paidConv),
-        remainingBalance: buildLocal(remainingConv),
-      },
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function getSuspiciousPayments(req, res, next) {
-  try {
-    const suspicious = await Payment.find({
-      schoolId: req.schoolId,
-      isSuspicious: true,
-    }).sort({ confirmedAt: -1 });
-    res.json({ count: suspicious.length, suspicious });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function getPendingPayments(req, res, next) {
-  try {
-    const pending = await Payment.find({
-      schoolId: req.schoolId,
-      confirmationStatus: "pending_confirmation",
-    }).sort({ confirmedAt: -1 });
-    res.json({ count: pending.length, pending });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// GET /api/payments/retry-queue
-async function getRetryQueue(req, res, next) {
-  try {
-    if (
-      !PendingVerification ||
-      typeof PendingVerification.find !== "function"
-    ) {
-      return res.json({
-        pending: { count: 0, items: [] },
-        dead_letter: { count: 0, items: [] },
-        recently_resolved: { count: 0, items: [] },
-      });
-    }
-
-    const [pending, deadLetter, resolved] = await Promise.all([
-      PendingVerification.find({
-        schoolId: req.schoolId,
-        status: "pending",
-      }).sort({ nextRetryAt: 1 }),
-      PendingVerification.find({
-        schoolId: req.schoolId,
-        status: "dead_letter",
-      }).sort({ updatedAt: -1 }),
-      PendingVerification.find({ schoolId: req.schoolId, status: "resolved" })
-        .sort({ resolvedAt: -1 })
-        .limit(20),
-    ]);
-
-    res.json({
-      pending: { count: pending.length, items: pending },
-      dead_letter: { count: deadLetter.length, items: deadLetter },
-      recently_resolved: { count: resolved.length, items: resolved },
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// GET /api/payments/rates
-async function getExchangeRates(req, res, next) {
-  try {
-    const targetCurrency = req.school.localCurrency || "USD";
-    const { _getRates } = require("../services/currencyConversionService");
-    const rateEntry = await _getRates(targetCurrency);
-
-    if (!rateEntry) {
-      return res.json({
-        available: false,
-        currency: targetCurrency,
-        rates: null,
-        lastFetchedAt: null,
-        stale: false,
-        staleAge: null,
-        message:
-          "Price feed is currently unavailable. Amounts are shown in XLM only.",
-      });
-    }
-
-    res.json({
-      available: true,
-      currency: targetCurrency,
-      rates: rateEntry.rates,
-      lastFetchedAt: (rateEntry.lastSuccessfulFetch || rateEntry.fetchedAt).toISOString(),
-      stale: rateEntry.stale || false,
-      staleAge: rateEntry.staleAge || null,
-      rateTimestamp: rateEntry.fetchedAt.toISOString(),
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// ── #93 Transaction Filtering API ─────────────────────────────────────────────
-/**
- * GET /api/payments/
- *
- * Query params (all optional):
- *   startDate  — ISO date string (e.g. 2026-01-01)
- *   endDate    — ISO date string (e.g. 2026-12-31)
- *   minAmount  — minimum payment amount (inclusive)
- *   maxAmount  — maximum payment amount (inclusive)
- *   status     — payment status filter (e.g. SUCCESS, FAILED, PENDING)
- *   studentId  — filter by student ID
- *   page       — pagination page (default 1)
- *   limit      — page size (default 50, max 200)
- */
-async function getAllPayments(req, res, next) {
-  try {
-    const { schoolId } = req;
-    const {
-      page = 1,
-      limit = 50,
-      startDate,
-      endDate,
-      minAmount,
-      maxAmount,
-      status,
-      studentId,
-      isSuspicious,
-    } = req.query;
-
-    const filter = { schoolId, studentDeleted: { $ne: true }, deletedAt: null };
-
-    if (startDate || endDate) {
-      filter.confirmedAt = {};
-      if (startDate) {
-        if (isNaN(Date.parse(startDate)))
-          return res
-            .status(400)
-            .json({ error: "Invalid startDate", code: "VALIDATION_ERROR" });
-        filter.confirmedAt.$gte = new Date(startDate);
-      }
-      if (endDate) {
-        if (isNaN(Date.parse(endDate)))
-          return res
-            .status(400)
-            .json({ error: "Invalid endDate", code: "VALIDATION_ERROR" });
-        const end = new Date(endDate);
-        end.setUTCHours(23, 59, 59, 999);
-        filter.confirmedAt.$lte = end;
-      }
-    }
-
-    if (minAmount || maxAmount) {
-      filter.amount = {};
-      if (minAmount) {
-        const min = Number(minAmount);
-        if (!Number.isFinite(min))
-          return res
-            .status(400)
-            .json({ error: "Invalid minAmount", code: "VALIDATION_ERROR" });
-        filter.amount.$gte = min;
-      }
-      if (maxAmount) {
-        const max = Number(maxAmount);
-        if (!Number.isFinite(max))
-          return res
-            .status(400)
-            .json({ error: "Invalid maxAmount", code: "VALIDATION_ERROR" });
-        filter.amount.$lte = max;
-      }
-    }
-
-    if (status) filter.status = status.toUpperCase();
-    if (studentId) filter.studentId = studentId;
-    if (isSuspicious !== undefined)
-      filter.isSuspicious = isSuspicious === "true";
-
-    const pageNum = Math.max(1, parseInt(page, 10));
-    const pageSize = Math.min(200, Math.max(1, parseInt(limit, 10)));
-    const skip = (pageNum - 1) * pageSize;
-
-    const [payments, total] = await Promise.all([
-      Payment.find(filter)
-        .sort({ confirmedAt: -1 })
-        .skip(skip)
-        .limit(pageSize)
-        .lean(),
-      Payment.countDocuments(filter),
-    ]);
-
-    const enrichedPayments = payments.map((p) => ({
-      ...p,
-      stellarExplorerUrl: getExplorerUrl(p.transactionHash || p.txHash),
-      explorerUrl: getExplorerUrl(p.transactionHash || p.txHash),
-    }));
-
-    res.json({
-      payments: enrichedPayments,
-      pagination: {
-        page: pageNum,
-        limit: pageSize,
-        total,
-        totalPages: Math.ceil(total / pageSize),
-        hasNext: pageNum < Math.ceil(total / pageSize),
-        hasPrev: pageNum > 1,
-      },
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// ====================== OTHER FUNCTIONS (kept as-is, just cleaned) ======================
-
-const Receipt = require("../models/receiptModel");
-const { createReceipt } = require("../services/receiptService");
-
-async function generateReceipt(req, res, next) {
-  try {
-    const { schoolId } = req;
-    const { txHash } = req.params;
-
-    const existing = await Receipt.findOne({ txHash, schoolId });
-    if (existing) return res.json(existing);
-
-    const payment = await Payment.findOne({
-      txHash,
-      schoolId,
-      status: "SUCCESS",
-    });
-    if (!payment) {
-      return res.status(404).json({
-        error: "Confirmed payment not found for this transaction hash",
-        code: "NOT_FOUND",
-      });
-    }
-
-    const receipt = await Receipt.create({
-      txHash: payment.txHash,
-      studentId: payment.studentId,
-      schoolId: payment.schoolId,
-      amount: payment.amount,
-      assetCode: payment.assetCode || "XLM",
-      feeAmount: payment.feeAmount,
-      feeValidationStatus: payment.feeValidationStatus,
-      memo: payment.memo,
-      confirmedAt: payment.confirmedAt,
-    });
-
-    res.status(201).json(receipt);
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function lockPaymentForUpdate(req, res, next) {
-  try {
-    const { schoolId } = req;
-    const { paymentId } = req.params;
-    const lockDurationMs = req.body.lockDurationMs || 30000;
-    const lockId = `lock_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const lockDeadline = new Date(Date.now() + lockDurationMs);
-
-    const payment = await Payment.findOneAndUpdate(
-      {
-        _id: paymentId,
-        schoolId,
-        $or: [
-          { lockedUntil: null },
-          { lockedUntil: { $exists: false } },
-          { lockedUntil: { $lte: new Date() } },
-        ],
-      },
-      { $set: { lockedUntil: lockDeadline, lockHolder: lockId } },
-      { new: true },
-    );
-
-    if (!payment) {
-      const exists = await Payment.findOne({ _id: paymentId, schoolId });
-      if (!exists)
-        return res
-          .status(404)
-          .json({ error: "Payment not found", code: "NOT_FOUND" });
-      return res.status(409).json({
-        error: "Payment is currently locked by another process",
-        code: "PAYMENT_LOCKED",
-        lockedUntil: exists.lockedUntil,
-      });
-    }
-
-    res.json({
-      locked: true,
-      lockId,
-      lockedUntil: lockDeadline,
-      paymentId: payment._id,
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function unlockPayment(req, res, next) {
-  try {
-    const { schoolId } = req;
-    const { paymentId } = req.params;
-    const { lockId } = req.body;
-
-    if (!lockId)
-      return res
-        .status(400)
-        .json({ error: "lockId is required", code: "VALIDATION_ERROR" });
-
-    const payment = await Payment.findOneAndUpdate(
-      { _id: paymentId, schoolId, lockHolder: lockId },
-      { $set: { lockedUntil: null, lockHolder: null } },
-      { new: true },
-    );
-
-    if (!payment)
-      return res.status(404).json({
-        error: "Payment not found or lockId does not match",
-        code: "NOT_FOUND",
-      });
-
-    res.json({ unlocked: true, paymentId: payment._id });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function getDeadLetterJobs(req, res, next) {
-  try {
-    const { getDeadLetterQueue } = require("../config/retryQueueSetup");
-    const queue = getDeadLetterQueue();
-    const jobs = queue ? await queue.getFailed(0, 99) : [];
-    res.json({
-      jobs: jobs.map((j) => ({
-        id: j.id,
-        name: j.name,
-        data: j.data,
-        failedReason: j.failedReason,
-      })),
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function retryDeadLetterJob(req, res, next) {
-  try {
-    const { getDeadLetterQueue } = require("../config/retryQueueSetup");
-    const { jobId } = req.params;
-    const queue = getDeadLetterQueue();
-    if (!queue)
-      return res.status(503).json({
-        error: "Retry queue unavailable",
-        code: "SERVICE_UNAVAILABLE",
-      });
-    const job = await queue.getJob(jobId);
-    if (!job)
-      return res
-        .status(404)
-        .json({ error: "Job not found", code: "NOT_FOUND" });
-    await job.retry();
-    res.json({ message: "Job queued for retry", jobId });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function getQueueJobStatus(req, res, next) {
-  try {
-    const { getRetryQueueStatus } = require("../config/retryQueueSetup");
-    const status = await getRetryQueueStatus();
-    res.json(status || { available: false });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// GET /api/payments/summary
-async function getPaymentSummary(req, res, next) {
-  try {
-    const { schoolId } = req;
-
-    const [studentStats, xlmStats, categoryStats] = await Promise.all([
-      Student.aggregate([
-        { $match: { schoolId, deletedAt: null } },
-        {
-          $group: {
-            _id: null,
-            totalStudents: { $sum: 1 },
-            paidCount: { $sum: { $cond: ["$feePaid", 1, 0] } },
-            unpaidCount: { $sum: { $cond: ["$feePaid", 0, 1] } },
-          },
-        },
-      ]),
-      Payment.aggregate([
-        { $match: { schoolId, status: "SUCCESS", deletedAt: null, studentDeleted: { $ne: true } } },
-        { $group: { _id: null, totalXlmCollected: { $sum: "$amount" } } },
-      ]),
-      // Get per-category statistics
-      Payment.aggregate([
-        { $match: { schoolId, status: "SUCCESS", deletedAt: null, studentDeleted: { $ne: true }, feeCategory: { $ne: null } } },
-        {
-          $group: {
-            _id: "$feeCategory",
-            totalCollected: { $sum: "$amount" },
-            paymentCount: { $sum: 1 },
-          },
-        },
-      ]),
-    ]);
-
-    const s = studentStats[0] || {
-      totalStudents: 0,
-      paidCount: 0,
-      unpaidCount: 0,
-    };
-    const x = xlmStats[0] || { totalXlmCollected: 0 };
-
-    // Build category breakdown
-    const categoryBreakdown = categoryStats.map(cat => ({
-      category: cat._id,
-      totalCollected: parseFloat(cat.totalCollected.toFixed(7)),
-      paymentCount: cat.paymentCount,
-    }));
-
-    res.json({
-      totalStudents: s.totalStudents,
-      paidCount: s.paidCount,
-      unpaidCount: s.unpaidCount,
-      totalXlmCollected: parseFloat(x.totalXlmCollected.toFixed(7)),
-      categoryBreakdown,
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-function streamPaymentEvents(req, res) {
-  const { addClient, removeClient } = require("../services/sseService");
-  const schoolId = req.schoolId;
-
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  const ping = setInterval(() => res.write(": ping\n\n"), 30000);
-  addClient(schoolId, res);
-
-  req.on("close", () => {
-    clearInterval(ping);
-    removeClient(schoolId, res);
-  });
-}
-
-/**
- * GET /api/payments/stuck
- * Admin-only. List payments in SUBMITTED status older than the threshold.
- */
-async function getStuckPayments(req, res, next) {
-  try {
-    const { findStuckPayments, STUCK_PAYMENT_THRESHOLD_MS } = require('../services/stuckPaymentReconciliation');
-    
-    const stuckPayments = await findStuckPayments();
-    
-    res.json({
-      count: stuckPayments.length,
-      thresholdMs: STUCK_PAYMENT_THRESHOLD_MS,
-      thresholdMinutes: Math.round(STUCK_PAYMENT_THRESHOLD_MS / 60000),
-      payments: stuckPayments.map(p => ({
-        txHash: p.txHash,
-        studentId: p.studentId,
-        amount: p.amount,
-        status: p.status,
-        submittedAt: p.submittedAt,
-        confirmedAt: p.confirmedAt,
-        schoolId: p.schoolId,
-      })),
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// Allowed manual status transitions: from → [to, ...]
-const ALLOWED_TRANSITIONS = {
-  SUCCESS:   ['DISPUTED'],
-  PENDING:   ['FAILED'],
-  SUBMITTED: ['FAILED'],
-};
-
-/**
- * PATCH /api/payments/:txHash/status
- * Admin-only. Manually override a payment status with a mandatory reason.
- * Allowed transitions: SUCCESS → DISPUTED, PENDING/SUBMITTED → FAILED.
- */
-async function updatePaymentStatus(req, res, next) {
-  try {
-    const { txHash } = req.params;
-    const { status: newStatus, reason } = req.body;
-
-    if (!newStatus || !reason) {
-      return res.status(400).json({ error: 'status and reason are required', code: 'VALIDATION_ERROR' });
-    }
-
-    const payment = await Payment.findOne({ schoolId: req.schoolId, txHash }).lean();
-    if (!payment) {
-      const err = new Error('Payment not found');
-      err.code = 'NOT_FOUND';
-      return next(err);
-    }
-
-    const allowed = ALLOWED_TRANSITIONS[payment.status] || [];
-    if (!allowed.includes(newStatus)) {
-      return res.status(400).json({
-        error: `Cannot transition from ${payment.status} to ${newStatus}`,
-        code: 'INVALID_TRANSITION',
-      });
-    }
-
-    const updated = await Payment.findOneAndUpdate(
-      { schoolId: req.schoolId, txHash },
-      { $set: { status: newStatus } },
-      { new: true },
-    );
-
-    const { logAudit } = require('../services/auditService');
-    await logAudit({
-      schoolId: req.schoolId,
-      action: 'payment_status_update',
-      performedBy: req.auditContext?.performedBy || 'unknown',
-      targetId: txHash,
-      targetType: 'payment',
-      details: { from: payment.status, to: newStatus, reason },
-      result: 'success',
-      ipAddress: req.auditContext?.ipAddress,
-      userAgent: req.auditContext?.userAgent,
-    });
-
-    res.json(updated);
-  } catch (err) {
-    next(err);
   }
 }
 
 module.exports = {
   getPaymentInstructions,
   createPaymentIntent,
+  submitTransaction,
   verifyPayment,
   verifyTransactionHash,
-  submitTransaction,
-  syncAllPayments,
-  getSyncStatus,
-  finalizePayments,
-  getStudentPayments,
-  getAllPayments, // ← Updated with proper pagination
-  getAcceptedAssets,
-  getPaymentLimitsEndpoint,
-  getOverpayments,
-  getStudentBalance,
-  getSuspiciousPayments,
-  getPendingPayments,
-  getRetryQueue,
-  getExchangeRates,
-  getDeadLetterJobs,
-  retryDeadLetterJob,
-  lockPaymentForUpdate,
-  unlockPayment,
-  generateReceipt,
-  getQueueJobStatus,
-  streamPaymentEvents,
-  getPaymentSummary,
-  updatePaymentStatus,
-  getStuckPayments,
+  getExplorerUrl,
+  wrapStellarError,
+  // Re-export from split controllers so tests importing paymentController still work
+  ...require('./paymentQueryController'),
+  ...require('./paymentAdminController'),
 };

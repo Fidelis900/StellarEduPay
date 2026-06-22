@@ -3,6 +3,19 @@
 // Must set required env vars before any module that loads config/index.js
 process.env.MONGO_URI = 'mongodb://localhost:27017/test';
 process.env.SCHOOL_WALLET_ADDRESS = 'GCICZOP346CKADPWOZ6JAQ7OCGH44UELNS3GSDXFOTSZRW6OYZZ6KSY7B';
+process.env.JWT_SECRET = 'test-jwt-secret-for-stellar-service-suite';
+
+// #606 — Mock the Stellar SDK so tests never make real network calls
+jest.mock('@stellar/stellar-sdk', () => ({
+  Operation: {
+    payment: jest.fn(),
+    // Converts a stroop integer string back to a decimal XLM string (1 stroop = 0.0000001 XLM)
+    _fromXDRAmount: (stroops) => (parseInt(stroops, 10) / 1e7).toFixed(7),
+  },
+  Horizon: { Server: jest.fn().mockImplementation(() => ({})) },
+  Networks: { TESTNET: 'Test SDF Network ; September 2015', PUBLIC: 'Public Global Stellar Network ; September 2015' },
+  Asset: { native: jest.fn(() => ({ isNative: () => true })) },
+}), { virtual: true });
 
 const {
   verifyTransaction,
@@ -172,7 +185,7 @@ describe('extractValidPayment', () => {
   });
 
   test('returns payOp, memo, asset for a valid transaction', async () => {
-    const tx = { successful: true, memo: 'STU001', operations: validOps };
+    const tx = { successful: true, memo: 'STU001', memo_type: 'text', operations: validOps };
     const result = await extractValidPayment(tx, 'GCICZOP346CKADPWOZ6JAQ7OCGH44UELNS3GSDXFOTSZRW6OYZZ6KSY7B');
     expect(result).not.toBeNull();
     expect(result.memo).toBe('STU001');
@@ -320,7 +333,7 @@ describe('syncPaymentsForSchool', () => {
   });
 
   test('resolves without error when no transactions exist', async () => {
-    await expect(syncPaymentsForSchool(school)).resolves.toBeUndefined();
+    await expect(syncPaymentsForSchool(school)).resolves.toBeDefined();
   });
 
   test('skips transaction with unmatched memo (no matching student)', async () => {

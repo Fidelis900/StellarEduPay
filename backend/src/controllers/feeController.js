@@ -3,254 +3,113 @@
 const FeeStructure = require('../models/feeStructureModel');
 const { get, set, del, KEYS, TTL } = require('../cache');
 const { logAudit } = require('../services/auditService');
+const logger = require('../utils/logger');
 
-// POST /api/fees
+function audit(req, action, targetId, details) {
+  if (!req.auditContext) return Promise.resolve();
+  return logAudit({ schoolId: req.schoolId, action, performedBy: req.auditContext.performedBy, targetId, targetType: 'fee', details, result: 'success', ipAddress: req.auditContext.ipAddress, userAgent: req.auditContext.userAgent });
+}
+
 async function createFeeStructure(req, res, next) {
   try {
-    const { schoolId } = req; // injected by resolveSchool middleware
+    const { schoolId } = req;
     const { className, feeAmount, description, academicYear, paymentDeadline } = req.body;
-    if (!className || feeAmount == null) {
-      const err = new Error('className and feeAmount are required');
-      err.code = 'VALIDATION_ERROR';
-      return next(err);
-    }
+    if (!className || feeAmount == null) return next(Object.assign(new Error('className and feeAmount are required'), { code: 'VALIDATION_ERROR' }));
 
-    // Check for existing active fee structure for same class/academic year
-    const existing = await FeeStructure.findOne({
-      schoolId,
-      className,
-      isActive: true,
-    });
+    const existing = await FeeStructure.findOne({ schoolId, className, isActive: true });
+    if (existing) return next(Object.assign(new Error(`Active fee structure already exists for class ${className}`), { code: 'DUPLICATE_FEE_STRUCTURE', status: 409 }));
 
-    if (existing) {
-      const err = new Error(
-        `An active fee structure already exists for class ${className} in academic year ${existing.academicYear}`
-      );
-      err.code = 'DUPLICATE_FEE_STRUCTURE';
-      err.status = 409;
-      return next(err);
-    }
-
-    const fee = await FeeStructure.create({
-      schoolId,
-      className,
-      feeAmount,
-      description,
-      academicYear: academicYear || new Date().getUTCFullYear().toString(),
-      isActive: true,
-      paymentDeadline: paymentDeadline || null,
-    });
-
-    // Invalidate fee caches so next read reflects the change
+    const fee = await FeeStructure.create({ schoolId, className, feeAmount, description, academicYear: academicYear || new Date().getUTCFullYear().toString(), isActive: true, paymentDeadline: paymentDeadline || null });
     del(KEYS.feesAll(), KEYS.feeByClass(className));
-
-    // Audit log
-    if (req.auditContext) {
-      await logAudit({
-        schoolId,
-        action: 'fee_create',
-        performedBy: req.auditContext.performedBy,
-        targetId: className,
-        targetType: 'fee',
-        details: {
-          className,
-          feeAmount,
-          description,
-          academicYear,
-          paymentDeadline,
-        },
-        result: 'success',
-        ipAddress: req.auditContext.ipAddress,
-        userAgent: req.auditContext.userAgent,
-      });
-    }
-
+    await audit(req, 'fee_create', className, { className, feeAmount, academicYear });
     res.status(201).json(fee);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 }
 
-// GET /api/fees
 async function getAllFeeStructures(req, res, next) {
   try {
+    const includeDeleted = req.query.includeDeleted === 'true';
+    const isAdmin = Boolean(req.admin);
     const cacheKey = KEYS.feesAll();
-    const cached = get(cacheKey);
-    if (cached !== undefined) return res.json(cached);
 
-    const fees = await FeeStructure.find({ schoolId: req.schoolId, isActive: true }).sort({ className: 1 });
-    set(cacheKey, fees, TTL.FEES);
+    if (!includeDeleted && !isAdmin) {
+      const cached = get(cacheKey);
+      if (cached !== undefined) return res.json(cached);
+    }
+
+    const filter = { schoolId: req.schoolId, ...(isAdmin ? {} : { isActive: true }), ...(includeDeleted ? {} : { deletedAt: null }) };
+    const query = FeeStructure.find(filter);
+    if (includeDeleted) query.includeDeleted();
+    const fees = await query.sort({ className: 1 });
+    if (!includeDeleted && !isAdmin) set(cacheKey, fees, TTL.FEES);
     res.json(fees);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 }
 
-// GET /api/fees/:className
 async function getFeeByClass(req, res, next) {
   try {
     const { className } = req.params;
-    const cacheKey = KEYS.feeByClass(className);
-    const cached = get(cacheKey);
+    const cached = get(KEYS.feeByClass(className));
     if (cached !== undefined) return res.json(cached);
 
-    const fee = await FeeStructure.findOne({
-      schoolId: req.schoolId,
-      className: req.params.className,
-      isActive: true,
-    });
-    if (!fee) {
-      const err = new Error(`No fee structure found for class ${className}`);
-      err.code = 'NOT_FOUND';
-      return next(err);
-    }
-    set(cacheKey, fee, TTL.FEES);
+    const fee = await FeeStructure.findOne({ schoolId: req.schoolId, className, deletedAt: null, isActive: true });
+    if (!fee) return next(Object.assign(new Error(`No fee structure found for class ${className}`), { code: 'NOT_FOUND' }));
+    set(KEYS.feeByClass(className), fee, TTL.FEES);
     res.json(fee);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 }
 
-// DELETE /api/fees/:className
 async function deleteFeeStructure(req, res, next) {
   try {
     const { className } = req.params;
-    const force = req.query.force === 'true';
-
     const Student = require('../models/studentModel');
-    const affectedCount = await Student.countDocuments({
-      schoolId: req.schoolId,
-      class: className,
-      feePaid: false,
-      deletedAt: null,
-    });
+    const affectedCount = await Student.countDocuments({ schoolId: req.schoolId, class: className, feePaid: false, deletedAt: null });
 
-    if (affectedCount > 0 && !force) {
-      const err = new Error(
-        `${affectedCount} student(s) in class ${className} have unpaid fees. Use ?force=true to deactivate anyway.`
-      );
-      err.code = 'CONFLICT';
-      err.status = 409;
-      err.details = { affectedCount };
-      return next(err);
-    }
+    if (affectedCount > 0 && req.query.force !== 'true')
+      return next(Object.assign(new Error(`${affectedCount} student(s) in class ${className} have unpaid fees. Use ?force=true to deactivate anyway.`), { code: 'CONFLICT', status: 409, details: { affectedCount } }));
 
-    const fee = await FeeStructure.findOneAndUpdate(
-      { schoolId: req.schoolId, className: req.params.className },
-      { isActive: false },
-      { new: true }
-    );
-    if (!fee) {
-      const err = new Error('Fee structure not found');
-      err.code = 'NOT_FOUND';
-      return next(err);
-    }
+    const fee = await FeeStructure.findOneAndUpdate({ schoolId: req.schoolId, className }, { isActive: false }, { new: true });
+    if (!fee) return next(Object.assign(new Error('Fee structure not found'), { code: 'NOT_FOUND' }));
 
-    if (affectedCount > 0) {
-      const logger = require('../utils/logger');
-      logger.warn('Fee structure deactivated with active student obligations', {
-        schoolId: req.schoolId,
-        className,
-        affectedStudents: affectedCount,
-      });
-    }
-
-    // Invalidate fee caches
+    if (affectedCount > 0) logger.warn('Fee structure deactivated with active obligations', { schoolId: req.schoolId, className, affectedStudents: affectedCount });
     del(KEYS.feesAll(), KEYS.feeByClass(className));
-
-    // Audit log
-    if (req.auditContext) {
-      await logAudit({
-        schoolId: req.schoolId,
-        action: 'fee_delete',
-        performedBy: req.auditContext.performedBy,
-        targetId: className,
-        targetType: 'fee',
-        details: { className, feeAmount: fee.feeAmount },
-        result: 'success',
-        ipAddress: req.auditContext.ipAddress,
-        userAgent: req.auditContext.userAgent,
-      });
-    }
-
+    await audit(req, 'fee_delete', className, { className, feeAmount: fee.feeAmount });
     res.json({ message: `Fee structure for class ${className} deactivated` });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 }
 
-// PUT /api/fees/:className
 async function updateFeeStructure(req, res, next) {
   try {
     const { className } = req.params;
     const { feeAmount, description, academicYear, paymentDeadline, cascadeToStudents } = req.body;
+    if (feeAmount == null) return next(Object.assign(new Error('feeAmount is required'), { code: 'VALIDATION_ERROR' }));
 
-    if (feeAmount == null) {
-      const err = new Error('feeAmount is required');
-      err.code = 'VALIDATION_ERROR';
-      return next(err);
-    }
-
-    // Build update object — only include fields explicitly provided
     const updateFields = { feeAmount };
-    if (description !== undefined) updateFields.description = description;
-    if (academicYear !== undefined) updateFields.academicYear = academicYear;
+    if (description    !== undefined) updateFields.description    = description;
+    if (academicYear   !== undefined) updateFields.academicYear   = academicYear;
     if (paymentDeadline !== undefined) updateFields.paymentDeadline = paymentDeadline;
 
-    const fee = await FeeStructure.findOneAndUpdate(
-      { schoolId: req.schoolId, className, isActive: true },
-      updateFields,
-      { new: true, runValidators: true }
-    );
+    const fee = await FeeStructure.findOneAndUpdate({ schoolId: req.schoolId, className, isActive: true }, updateFields, { new: true, runValidators: true });
+    if (!fee) return next(Object.assign(new Error(`No active fee structure found for class ${className}`), { code: 'NOT_FOUND' }));
 
-    if (!fee) {
-      const err = new Error(`No active fee structure found for class ${className}`);
-      err.code = 'NOT_FOUND';
-      return next(err);
-    }
-
-    // Invalidate fee caches
     del(KEYS.feesAll(), KEYS.feeByClass(className));
 
-    // Optionally cascade feeAmount update to all students in this class
     let studentsUpdated = 0;
     if (cascadeToStudents === true) {
       const Student = require('../models/studentModel');
       const students = await Student.find({ schoolId: req.schoolId, class: className, deletedAt: null });
-      
-      // Process in batches of 500 to avoid memory issues
-      const BATCH_SIZE = 500;
-      for (let i = 0; i < students.length; i += BATCH_SIZE) {
-        const batch = students.slice(i, i + BATCH_SIZE);
-        for (const student of batch) {
-          student.feeAmount = feeAmount;
-          student.remainingBalance = Math.max(0, feeAmount - (student.totalPaid || 0));
-          student.feePaid = (student.totalPaid || 0) >= feeAmount;
-          await student.save(); // triggers pre-save hook for fees array sync
-          studentsUpdated++;
-        }
+      for (const s of students) {
+        s.feeAmount = feeAmount;
+        s.remainingBalance = Math.max(0, feeAmount - (s.totalPaid || 0));
+        s.feePaid = (s.totalPaid || 0) >= feeAmount;
+        await s.save();
+        studentsUpdated++;
       }
     }
 
-    // Audit log
-    if (req.auditContext) {
-      await logAudit({
-        schoolId: req.schoolId,
-        action: 'fee_update',
-        performedBy: req.auditContext.performedBy,
-        targetId: className,
-        targetType: 'fee',
-        details: { className, feeAmount, description, academicYear, paymentDeadline, cascadeToStudents, studentsUpdated },
-        result: 'success',
-        ipAddress: req.auditContext.ipAddress,
-        userAgent: req.auditContext.userAgent,
-      });
-    }
-
+    await audit(req, 'fee_update', className, { className, feeAmount, cascadeToStudents, studentsUpdated });
     res.json({ fee, studentsUpdated });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 }
 
 module.exports = { createFeeStructure, getAllFeeStructures, getFeeByClass, deleteFeeStructure, updateFeeStructure };

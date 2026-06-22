@@ -24,6 +24,19 @@ async function registerStudent(req, res, next) {
       return next(err);
     }
 
+    // Check student quota
+    const School = require('../models/schoolModel');
+    const school = await School.findOne({ schoolId });
+    if (school && school.maxStudents) {
+      const studentCount = await Student.countDocuments({ schoolId, deletedAt: null });
+      if (studentCount >= school.maxStudents) {
+        const err = new Error(`School has reached maximum student quota of ${school.maxStudents}`);
+        err.code = 'STUDENT_QUOTA_EXCEEDED';
+        err.status = 403;
+        return next(err);
+      }
+    }
+
     // Check if student was previously soft-deleted
     const deletedStudent = await Student.findOne({ schoolId, studentId }).includeDeleted();
     if (deletedStudent && deletedStudent.deletedAt !== null) {
@@ -39,6 +52,14 @@ async function registerStudent(req, res, next) {
       name: { $regex: new RegExp(`^${escapedName}$`, 'i') },
       class: className,
     });
+
+    // Always validate that a fee structure exists for the class (#663)
+    if (className) {
+      const feeStructure = await FeeStructure.findOne({ schoolId, className, deletedAt: null });
+      if (!feeStructure) {
+        return res.status(400).json({ error: `No fee structure found for class "${className}"`, code: 'FEE_STRUCTURE_NOT_FOUND' });
+      }
+    }
 
     let assignedFee = feeAmount;
     let assignedDeadline = null;
@@ -286,6 +307,41 @@ async function getStudent(req, res, next) {
   }
 }
 
+/**
+ * Public endpoint: returns only non-PII fields for payment instructions
+ * Returns: { name, class, feePaid }
+ */
+async function getPublicStudentInfo(req, res, next) {
+  try {
+    const { studentId } = req.params;
+    const cacheKey = `public_student_${studentId}`;
+    const cached = get(cacheKey);
+    if (cached !== undefined) return res.json(cached);
+
+    const student = await Student.findOne({ schoolId: req.schoolId, studentId }, {
+      name: 1,
+      class: 1,
+      feePaid: 1,
+    });
+    if (!student) {
+      const err = new Error('Student not found');
+      err.code = 'NOT_FOUND';
+      return next(err);
+    }
+
+    const publicInfo = {
+      name: student.name,
+      class: student.class,
+      feePaid: student.feePaid,
+    };
+
+    set(cacheKey, publicInfo, TTL.STUDENT);
+    res.json(publicInfo);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getPaymentSummary(req, res, next) {
   try {
     const Payment = require('../models/paymentModel');
@@ -425,6 +481,12 @@ async function bulkImportStudents(req, res, next) {
 
     const results = { total: rows.length, created: 0, failed: 0, details: [] };
 
+    // Check student quota
+    const School = require('../models/schoolModel');
+    const school = await School.findOne({ schoolId });
+    const currentStudentCount = await Student.countDocuments({ schoolId, deletedAt: null });
+    const quotaRemaining = school && school.maxStudents ? school.maxStudents - currentStudentCount : Infinity;
+
     // Pre-fetch fee structures for all unique class names (one query per unique class, not per row)
     const uniqueClasses = [...new Set(rows.map(r => r.class?.trim()).filter(Boolean))];
     const feeStructureMap = {};
@@ -441,13 +503,30 @@ async function bulkImportStudents(req, res, next) {
 
     // Validate all rows first
     const validatedRows = [];
+    let quotaExceededAt = -1;
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const validationErrors = validateStudentRow(row);
 
       if (validationErrors.length > 0) {
         results.failed++;
-        results.details.push({ index: i, studentId: row.studentId || null, status: 'failed', errors: validationErrors });
+        results.details.push({ row: i + 2, studentId: row.studentId || null, error: validationErrors[0], code: 'VALIDATION_ERROR' });
+        continue;
+      }
+
+      // Check quota before adding to validatedRows
+      if (quotaExceededAt === -1 && validatedRows.length >= quotaRemaining) {
+        quotaExceededAt = i;
+      }
+
+      if (quotaExceededAt !== -1 && i >= quotaExceededAt) {
+        results.failed++;
+        results.details.push({
+          row: i + 2,
+          studentId: row.studentId,
+          error: `School has reached maximum student quota of ${school.maxStudents}`,
+          code: 'STUDENT_QUOTA_EXCEEDED',
+        });
         continue;
       }
 
@@ -459,10 +538,10 @@ async function bulkImportStudents(req, res, next) {
       if (assignedFee == null) {
         results.failed++;
         results.details.push({
-          index: i,
+          row: i + 2,
           studentId: row.studentId,
-          status: 'failed',
-          errors: [`No feeAmount provided and no fee structure found for class "${row.class}"`],
+          error: `No feeAmount provided and no fee structure found for class "${row.class}"`,
+          code: 'FEE_STRUCTURE_NOT_FOUND',
         });
         continue;
       }
@@ -489,7 +568,7 @@ async function bulkImportStudents(req, res, next) {
         inserted.forEach(student => {
           const originalRow = chunk.find(r => r.studentId === student.studentId);
           results.details.push({
-            index: originalRow.index,
+            row: originalRow.index + 2,
             studentId: student.studentId,
             status: 'created',
             _id: student._id,
@@ -502,7 +581,7 @@ async function bulkImportStudents(req, res, next) {
           err.insertedDocs.forEach(student => {
             const originalRow = chunk.find(r => r.studentId === student.studentId);
             results.details.push({
-              index: originalRow.index,
+              row: originalRow.index + 2,
               studentId: student.studentId,
               status: 'created',
               _id: student._id,
@@ -517,10 +596,10 @@ async function bulkImportStudents(req, res, next) {
               ? 'Student ID already exists in this school'
               : writeErr.err.message;
             results.details.push({
-              index: failedRow.index,
+              row: failedRow.index + 2,
               studentId: failedRow.studentId,
-              status: 'failed',
-              errors: [message],
+              error: message,
+              code: writeErr.err.code === 11000 ? 'DUPLICATE_STUDENT_ID' : 'INSERT_ERROR',
             });
           });
         }
@@ -687,4 +766,81 @@ async function reconcileStudent(req, res, next) {
   }
 }
 
-module.exports = { registerStudent, getAllStudents, getStudent, updateStudent, deleteStudent, getPaymentSummary, bulkImportStudents, getOverdueStudents, resetPayment, reconcileStudent, parseCsvBuffer };
+// GET /api/students/export
+async function exportStudents(req, res, next) {
+  try {
+    const { schoolId } = req;
+    const includeDeleted = req.query.includeDeleted === 'true';
+
+    const filter = { schoolId };
+    if (!includeDeleted) {
+      filter.deletedAt = null;
+    }
+    if (req.query.class) {
+      filter.class = req.query.class;
+    }
+    if (req.query.status) {
+      const status = req.query.status;
+      if (status === 'paid') {
+        filter.feePaid = true;
+      } else if (status === 'unpaid') {
+        filter.feePaid = false;
+        filter.totalPaid = { $lte: 0 };
+      } else if (status === 'partial') {
+        filter.feePaid = false;
+        filter.totalPaid = { $gt: 0 };
+      } else {
+        return res.status(400).json({ error: 'status must be paid, unpaid, or partial', code: 'VALIDATION_ERROR' });
+      }
+    }
+
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="students-${date}.csv"`);
+
+    const baseColumns = ['studentId', 'name', 'class', 'feeAmount', 'totalPaid', 'remainingBalance', 'feePaid', 'createdAt'];
+    const columns = includeDeleted ? [...baseColumns, 'deletedAt'] : baseColumns;
+
+    res.write(columns.join(',') + '\n');
+
+    const cursor = Student.find(filter).sort({ createdAt: -1 }).cursor();
+
+    cursor.on('data', (doc) => {
+      const row = columns.map((col) => {
+        const val = doc[col];
+        if (val == null) return '';
+        const str = String(val);
+        // Quote fields that contain commas, quotes, or newlines
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+          return '"' + str.replace(/"/g, '""') + '"';
+        }
+        return str;
+      });
+      res.write(row.join(',') + '\n');
+    });
+
+    cursor.on('error', (err) => {
+      next(err);
+    });
+
+    cursor.on('end', () => {
+      res.end();
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getFeeHistory(req, res, next) {
+  try {
+    const { schoolId } = req;
+    const { studentId } = req.params;
+    const StudentFeeHistory = require('../models/studentFeeHistoryModel');
+    const history = await StudentFeeHistory.find({ schoolId, studentId }).sort({ archivedAt: -1 }).lean();
+    res.json({ studentId, history });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { registerStudent, getAllStudents, getStudent, getPublicStudentInfo, updateStudent, deleteStudent, getPaymentSummary, bulkImportStudents, getOverdueStudents, resetPayment, reconcileStudent, parseCsvBuffer, exportStudents, getFeeHistory };

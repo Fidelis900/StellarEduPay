@@ -2,10 +2,21 @@
 
 const StellarSdk = require('@stellar/stellar-sdk');
 const config = require('./index');
+const { getInstance: getFailoverClient } = require('../services/horizonFailoverClient');
 
-const server = new StellarSdk.Horizon.Server(config.HORIZON_URL, {
-  timeout: config.STELLAR_TIMEOUT_MS,
-});
+// The failover client manages a prioritized list of Horizon URLs, a circuit
+// breaker per endpoint, and health-aware failover.  Callers that need to make
+// Horizon calls should prefer `horizonClient.call(server => server.xyz())`
+// so failover is automatic.  The `.server` property is kept for backward
+// compatibility with code that still accesses `server` directly.
+const horizonClient = getFailoverClient();
+
+/**
+ * Backward-compatible `server` export.
+ * Points to the currently active Horizon.Server instance.
+ * Use `horizonClient.call(fn)` for failover-aware calls.
+ */
+const server = horizonClient.server;
 
 const networkPassphrase = config.IS_TESTNET
   ? StellarSdk.Networks.TESTNET
@@ -76,14 +87,17 @@ function resolveAsset(assetCode) {
 }
 
 const CONFIRMATION_THRESHOLD = config.CONFIRMATION_THRESHOLD;
+const FINALIZATION_THRESHOLD = config.FINALIZATION_THRESHOLD;
 
 module.exports = {
   server,
+  horizonClient,
   networkPassphrase,
   SCHOOL_WALLET,
   StellarSdk,
   ACCEPTED_ASSETS,
   CONFIRMATION_THRESHOLD,
+  FINALIZATION_THRESHOLD,
   isAcceptedAsset,
   resolveAsset,
 };

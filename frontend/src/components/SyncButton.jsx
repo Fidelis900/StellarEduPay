@@ -7,6 +7,7 @@
  */
 import { useState } from "react";
 import { syncPayments } from "../services/api";
+import { getErrorMessage } from "../utils/errorMessages";
 
 export default function SyncButton({ onSyncComplete, lastSyncTime }) {
   const [showModal, setShowModal] = useState(false);
@@ -21,7 +22,7 @@ export default function SyncButton({ onSyncComplete, lastSyncTime }) {
       setShowModal(false);
       onSyncComplete?.(data);
     } catch (err) {
-      setError(err.response?.data?.error || "Sync failed. Please try again.");
+      setError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || "Sync failed. Please try again.");
     } finally {
       setSyncing(false);
     }
@@ -51,11 +52,11 @@ export default function SyncButton({ onSyncComplete, lastSyncTime }) {
             <h3 id="sync-modal-title" style={{ margin: "0 0 0.5rem" }}>
               Confirm Sync
             </h3>
-            <p style={{ margin: "0 0 0.25rem", fontSize: "0.9rem", color: "#555" }}>
+            <p style={{ margin: "0 0 0.25rem", fontSize: "0.9rem", color: "var(--text)" }}>
               This will fetch the latest transactions from the Stellar network and update payment
               records.
             </p>
-            <p style={{ margin: "0 0 1rem", fontSize: "0.85rem", color: "#888" }}>
+            <p style={{ margin: "0 0 1rem", fontSize: "0.85rem", color: "var(--muted)" }}>
               Last sync: <strong>{formattedLastSync}</strong>
             </p>
 
@@ -98,7 +99,7 @@ export default function SyncButton({ onSyncComplete, lastSyncTime }) {
 const btnStyle = {
   padding: "0.5rem 1.25rem",
   fontSize: "0.95rem",
-  background: "#1a1a2e",
+  background: "var(--primary)",
   color: "#fff",
   border: "none",
   borderRadius: 6,
@@ -116,7 +117,7 @@ const overlayStyle = {
 };
 
 const modalStyle = {
-  background: "#fff",
+  background: "var(--card-bg)",
   borderRadius: 8,
   padding: "1.5rem",
   width: "100%",
@@ -129,15 +130,16 @@ const cancelBtnStyle = {
   padding: "0.45rem 1rem",
   fontSize: "0.9rem",
   background: "none",
-  border: "1px solid #bbb",
+  border: "1px solid var(--border)",
   borderRadius: 6,
   cursor: "pointer",
+  color: "var(--text)",
 };
 
 const confirmBtnStyle = {
   padding: "0.45rem 1rem",
   fontSize: "0.9rem",
-  background: "#1a1a2e",
+  background: "var(--primary)",
   color: "#fff",
   border: "none",
   borderRadius: 6,

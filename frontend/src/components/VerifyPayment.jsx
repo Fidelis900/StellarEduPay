@@ -1,28 +1,66 @@
 import { useState, useRef } from "react";
 import { verifyPayment } from "../services/api";
+import { parseStellarError } from "../utils/stellarErrors";
+import { getErrorMessage } from "../utils/errorMessages";
+import { IconAlertTriangle, IconCheck, IconExternalLink, IconShield } from "./Icons";
 
-const STATUS_STYLE = {
-  valid:     { color: "#166534", bg: "#dcfce7" },
-  overpaid:  { color: "#854d0e", bg: "#fef9c3" },
-  underpaid: { color: "#991b1b", bg: "#fee2e2" },
-  unknown:   { color: "#475569", bg: "#f1f5f9" },
+const STATUS_BADGE = {
+  valid:     { cls: "badge badge-success", label: "Valid" },
+  overpaid:  { cls: "badge badge-warning", label: "Overpaid" },
+  underpaid: { cls: "badge badge-danger",  label: "Underpaid" },
+  unknown:   { cls: "badge badge-neutral", label: "Unknown" },
 };
 
+function InfoRow({ label, children, mono }) {
+  return (
+    <div style={{
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      padding: "0.625rem 0",
+      borderBottom: "1px solid var(--border)",
+      gap: "0.5rem",
+    }}>
+      <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", flexShrink: 0 }}>{label}</span>
+      <span style={{
+        fontWeight: 600,
+        textAlign: "right",
+        wordBreak: "break-all",
+        fontFamily: mono ? "monospace" : "inherit",
+        fontSize: mono ? "0.8rem" : "inherit",
+      }}>
+        {children}
+      </span>
+    </div>
+  );
+}
+
 export default function VerifyPayment() {
-  const [txHash, setTxHash] = useState("");
-  const [result, setResult] = useState(null);
-  const [error, setError]   = useState("");
-  const [loading, setLoading] = useState(false);
+  const [txHash, setTxHash]               = useState("");
+  const [result, setResult]               = useState(null);
+  const [error, setError]                 = useState("");
+  const [stellarStatusUrl, setStellarStatusUrl] = useState(null);
+  const [loading, setLoading]             = useState(false);
   const errorRef = useRef(null);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError(""); setResult(null); setLoading(true);
+    setError(""); setResult(null); setStellarStatusUrl(null); setLoading(true);
     try {
       const res = await verifyPayment(txHash.trim());
       setResult(res.data);
     } catch (err) {
-      setError(err.response?.data?.error || "Verification failed. Check the transaction hash and try again.");
+      const stellar = parseStellarError(err);
+      if (stellar) {
+        setError(stellar.message);
+        setStellarStatusUrl(stellar.stellarStatusUrl);
+      } else {
+        setError(
+          getErrorMessage(err.response?.data?.code, err.response?.data?.error) ||
+          "Verification failed. Check the transaction hash and try again."
+        );
+        setStellarStatusUrl(null);
+      }
       errorRef.current?.focus();
     } finally {
       setLoading(false);
@@ -30,77 +68,109 @@ export default function VerifyPayment() {
   }
 
   const st = result?.feeValidation?.status || "unknown";
-  const badge = STATUS_STYLE[st] || STATUS_STYLE.unknown;
+  const badge = STATUS_BADGE[st] || STATUS_BADGE.unknown;
 
   return (
-    <>
-      <style>{`
-        .vp-wrap { padding: 2rem 0; }
-        .vp-input { width: 100%; padding: 0.65rem 0.85rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; font-family: monospace; background: var(--bg); color: var(--text); outline: none; margin-bottom: 0.75rem; }
-        .vp-input:focus { border-color: var(--accent); }
-        .vp-card { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-top: 1.5rem; }
-        .vp-row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--border); font-size: 0.875rem; }
-        .vp-row:last-child { border-bottom: none; }
-        .vp-row-label { color: var(--muted); flex-shrink: 0; }
-        .vp-row-val { text-align: right; word-break: break-all; font-family: monospace; }
-      `}</style>
-
-      <div className="vp-wrap">
-        <h2 style={{ marginBottom: "0.25rem" }}>Verify Payment</h2>
-        <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginBottom: "1.5rem" }}>
-          Confirm a payment was recorded by entering its transaction hash.
+    <div className="card">
+      <div className="card-header">
+        <div className="card-title" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <IconShield size={15} /> Verify Payment
+        </div>
+      </div>
+      <div className="card-body">
+        <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "1.25rem" }}>
+          Confirm a payment was recorded by entering its Stellar transaction hash.
         </p>
 
         <form onSubmit={handleSubmit}>
-          <label htmlFor="txin" style={{ display: "block", fontSize: "0.78rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)", marginBottom: "0.4rem" }}>
-            Transaction Hash
-          </label>
-          <input id="txin" type="text" placeholder="e.g. 3389e9f0f1a65f19…"
-            value={txHash} onChange={e => setTxHash(e.target.value)}
-            required className="vp-input"
-          />
-          <button type="submit" disabled={loading || !txHash.trim()} className="btn-primary" style={{ width: "100%" }}>
+          <div className="form-group">
+            <label htmlFor="txin" className="form-label">Transaction Hash</label>
+            <input
+              id="txin"
+              type="text"
+              placeholder="e.g. 3389e9f0f1a65f19…"
+              value={txHash}
+              onChange={e => setTxHash(e.target.value)}
+              required
+              className="form-input"
+              style={{ fontFamily: "monospace", fontSize: "0.85rem" }}
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading || !txHash.trim()}
+            className="btn btn-dark"
+            style={{ width: "100%" }}
+          >
             {loading ? "Verifying…" : "Verify Transaction"}
           </button>
         </form>
 
         {error && (
-          <div ref={errorRef} role="alert" tabIndex="-1"
-            style={{ marginTop: "1rem", padding: "0.75rem 1rem", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, color: "#991b1b", fontSize: "0.875rem" }}>
-            {error}
+          <div ref={errorRef} role="alert" tabIndex="-1" className="alert alert-danger" style={{ marginTop: "1rem" }}>
+            <IconAlertTriangle size={15} />
+            <div>
+              <span>{error}</span>
+              {stellarStatusUrl && (
+                <a
+                  href={stellarStatusUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ display: "block", marginTop: "0.375rem", color: "inherit", fontWeight: 600, textDecoration: "underline" }}
+                >
+                  Check Stellar Network Status ↗
+                </a>
+              )}
+            </div>
           </div>
         )}
 
         {result && (
-          <div className="vp-card" role="status">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-              <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>Transaction Found</span>
-              <span style={{ background: badge.bg, color: badge.color, padding: "0.2rem 0.7rem", borderRadius: 20, fontSize: "0.75rem", fontWeight: 600 }}>
-                {st}
-              </span>
+          <div style={{ marginTop: "1.25rem" }} role="status">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <IconCheck size={15} style={{ color: "var(--success-text)" }} />
+                <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>Transaction Found</span>
+              </div>
+              <span className={badge.cls}>{badge.label}</span>
             </div>
 
-            <div className="vp-row"><span className="vp-row-label">Amount</span><span className="vp-row-val">{result.amount} {result.assetCode || "XLM"}</span></div>
-            <div className="vp-row"><span className="vp-row-label">Memo (Student ID)</span><span className="vp-row-val">{result.memo}</span></div>
-            <div className="vp-row"><span className="vp-row-label">Date</span><span className="vp-row-val" style={{ fontFamily: "inherit" }}>{result.date ? new Date(result.date).toLocaleString() : "—"}</span></div>
-            {result.feeValidation?.message && (
-              <div className="vp-row"><span className="vp-row-label">Note</span><span className="vp-row-val" style={{ fontFamily: "inherit", color: badge.color }}>{result.feeValidation.message}</span></div>
-            )}
-            <div className="vp-row">
-              <span className="vp-row-label">Tx Hash</span>
-              <span className="vp-row-val" style={{ fontSize: "0.78rem" }}>
-                {result.hash}
-                {result.stellarExplorerUrl && (
-                  <a href={result.stellarExplorerUrl} target="_blank" rel="noopener noreferrer"
-                    style={{ display: "block", color: "var(--accent)", fontFamily: "inherit", marginTop: "0.25rem" }}>
-                    View on Explorer ↗
-                  </a>
-                )}
+            <InfoRow label="Amount">
+              {result.amount}{" "}
+              <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--text-muted)" }}>
+                {result.assetCode || "XLM"}
               </span>
+            </InfoRow>
+            <InfoRow label="Memo (Student ID)" mono>{result.memo}</InfoRow>
+            <InfoRow label="Date">
+              {result.date ? new Date(result.date).toLocaleString() : "—"}
+            </InfoRow>
+            {result.feeValidation?.message && (
+              <InfoRow label="Note">
+                <span style={{ color: st === "valid" ? "var(--success-text)" : "var(--warning-text)" }}>
+                  {result.feeValidation.message}
+                </span>
+              </InfoRow>
+            )}
+            <div style={{ padding: "0.625rem 0" }}>
+              <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>Tx Hash</div>
+              <div style={{ fontFamily: "monospace", fontSize: "0.78rem", wordBreak: "break-all", color: "var(--text)" }}>
+                {result.hash}
+              </div>
+              {result.stellarExplorerUrl && (
+                <a
+                  href={result.stellarExplorerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", marginTop: "0.5rem", color: "var(--accent)", fontSize: "0.8125rem", fontWeight: 600 }}
+                >
+                  View on Stellar Explorer <IconExternalLink size={12} />
+                </a>
+              )}
             </div>
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }

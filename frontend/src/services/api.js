@@ -1,6 +1,9 @@
 import axios from "axios";
+import { createRefreshHandler } from "./authRefresh";
 
 const TIMEOUT_MS = parseInt(process.env.NEXT_PUBLIC_REQUEST_TIMEOUT_MS || "15000", 10);
+
+const SCHOOL_ID = process.env.NEXT_PUBLIC_SCHOOL_ID || "SCH001";
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
@@ -8,15 +11,38 @@ const api = axios.create({
   withCredentials: true,
 });
 
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401 && typeof window !== "undefined") {
-      window.location.href = "/login";
-    }
-    return Promise.reject(error);
+// Attach the school context header to every request unless one is already set.
+// The backend resolves school scope from X-School-ID (or X-School-Slug).
+api.interceptors.request.use((config) => {
+  const hasSchoolHeader = Object.keys(config.headers || {}).some(
+    (h) => h.toLowerCase() === "x-school-id" || h.toLowerCase() === "x-school-slug"
+  );
+  if (!hasSchoolHeader && SCHOOL_ID) {
+    config.headers = { ...config.headers, "X-School-ID": SCHOOL_ID };
   }
-);
+  return config;
+});
+
+// On a 401 we transparently refresh the access token (the HttpOnly cookies are
+// rotated by the backend) and replay the request, instead of hard-redirecting
+// and losing in-flight work. Only a failed refresh sends the user to /login,
+// preserving where they were via a return-to URL.
+function redirectToLogin() {
+  if (typeof window === "undefined") return;
+  const { pathname, search } = window.location;
+  if (pathname === "/login") return; // already there — avoid a redirect loop
+  const returnTo = encodeURIComponent(`${pathname}${search}`);
+  window.location.href = `/login?returnTo=${returnTo}`;
+}
+
+const onResponseRejected = createRefreshHandler({
+  refresh: () => api.post("/auth/refresh"),
+  retry: (config) => api(config),
+  redirectToLogin,
+  isAuthUrl: (url) => url.includes("/auth/"),
+});
+
+api.interceptors.response.use((response) => response, onResponseRejected);
 
 export const getStudents = (page = 1, limit = 20, { search, status, className } = {}) =>
   api.get("/students", {
@@ -28,10 +54,13 @@ export const getStudents = (page = 1, limit = 20, { search, status, className } 
       ...(className && { class: className }),
     },
   });
+export const getStudent = (studentId) => api.get(`/students/${studentId}`);
 export const registerStudent = (data) => api.post("/students", data);
+export const updateStudent = (studentId, data) => api.patch(`/students/${studentId}`, data);
 export const getPaymentSummary = () => api.get("/payments/summary");
 export const getPaymentInstructions = (studentId) => api.get(`/payments/instructions/${studentId}`);
 export const getStudentPayments = (studentId) => api.get(`/payments/${studentId}`);
+export const getStudentBalance  = (studentId) => api.get(`/payments/balance/${studentId}`);
 export const verifyPayment = (txHash) => api.post("/payments/verify", { txHash });
 export const syncPayments = () => api.post("/payments/sync");
 export const getSyncStatus = () => api.get("/payments/sync/status");

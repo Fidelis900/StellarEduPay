@@ -9,16 +9,44 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+      # Tests mock Mongoose — a standalone instance is sufficient for unit tests.
+      # Integration tests that require a replica set are guarded by RUN_INTEGRATION_TESTS.
+      MONGO_URI: mongodb://localhost:27017/stellaredupay_test
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: package-lock.json
+          node-version-file: '.nvmrc'
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            backend/node_modules
+            frontend/node_modules
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys:
+            - ${{ runner.os }}-node-
 
       - run: npm ci
+
+      - run: cd backend && npm ci && cd ..
+
+      - run: cd frontend && npm ci && cd ..
 
       - run: npm test

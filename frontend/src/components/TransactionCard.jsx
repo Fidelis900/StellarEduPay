@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { flagDispute } from "../services/api";
+import { getErrorMessage } from "../utils/errorMessages";
 
 const EXPLORER_BASE =
   process.env.NEXT_PUBLIC_STELLAR_EXPLORER_URL ||
@@ -73,7 +74,7 @@ export default function TransactionCard({
       setRaisedBy("");
       setReason("");
     } catch (err) {
-      setFormError(err.response?.data?.error || "Failed to submit dispute.");
+      setFormError(getErrorMessage(err.response?.data?.code, err.response?.data?.error) || "Failed to submit dispute.");
     } finally {
       setSubmitting(false);
     }
@@ -82,13 +83,13 @@ export default function TransactionCard({
   return (
     <div
       style={{
-        border: disputeState ? "1px solid #e65100" : "1px solid #ddd",
+        border: disputeState ? "1px solid #e65100" : "1px solid var(--border)",
         borderRadius: 8,
         padding: "0.75rem 1rem",
         marginBottom: "0.5rem",
         fontFamily: "sans-serif",
         boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-        background: "#fff",
+        background: "var(--card-bg)",
       }}
     >
       {/* Amount */}
@@ -104,28 +105,28 @@ export default function TransactionCard({
           </span>
         )}
         {!hasLocal && localCurrency && (
-          <span style={{ marginLeft: "0.5rem", color: "#bbb", fontSize: "0.8rem" }}>
+          <span style={{ marginLeft: "0.5rem", color: "var(--muted)", fontSize: "0.8rem" }}>
             (rate unavailable)
           </span>
         )}
       </p>
 
       {/* Student ID / Memo */}
-      <p style={{ margin: "0.3rem 0 0", fontSize: "0.85rem", color: "#555" }}>
-        <span style={{ color: "#888" }}>Student ID: </span>
+      <p style={{ margin: "0.3rem 0 0", fontSize: "0.85rem", color: "var(--text)" }}>
+        <span style={{ color: "var(--muted)" }}>Student ID: </span>
         <strong>{ref ?? "—"}</strong>
       </p>
 
       {/* Tx Hash */}
-      <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", color: "#555" }}>
-        <span style={{ color: "#888" }}>Tx: </span>
+      <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", color: "var(--text)" }}>
+        <span style={{ color: "var(--muted)" }}>Tx: </span>
         {tx ? (
           <a
             href={explorerUrl}
             target="_blank"
             rel="noopener noreferrer"
             title={tx}
-            style={{ color: "#1565c0", fontFamily: "monospace" }}
+            style={{ color: "var(--accent)", fontFamily: "monospace" }}
             aria-label={`View transaction ${tx} on Stellar Explorer`}
           >
             {truncateHash(tx)}
@@ -136,7 +137,7 @@ export default function TransactionCard({
       </p>
 
       {/* Date */}
-      <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", color: "#888" }}>{formatDate(date)}</p>
+      <p style={{ margin: "0.3rem 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>{formatDate(date)}</p>
 
       {/* Dispute section */}
       {disputeState ? (

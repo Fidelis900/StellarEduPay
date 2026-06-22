@@ -7,6 +7,18 @@ const cors = require('cors');
 const helmet = require('helmet');
 const mongoose = require('mongoose');
 
+// ── Suppress verbose third-party logging in development ──────────────────────
+// Prevent noise from ioredis reconnect attempts, Mongoose debug info, etc.
+// when LOG_LEVEL=info (the development default).
+if (process.env.NODE_ENV !== 'production') {
+  // Suppress ioredis verbose logging (connection/reconnection attempts)
+  const redisDebug = require('debug');
+  redisDebug.disable('*');
+  
+  // Suppress Mongoose debug output
+  mongoose.set('debug', false);
+}
+
 const studentRoutes = require('./routes/studentRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const feeRoutes = require('./routes/feeRoutes');
@@ -19,6 +31,7 @@ const receiptsRoutes = require('./routes/receiptsRoutes');
 const feeAdjustmentRoutes = require('./routes/feeAdjustmentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const authRoutes = require('./routes/authRoutes');
+const metricsRoute = require('./routes/metricsRoute');
 
 const { registerPaymentSavedSubscribers } = require('./services/paymentSavedSubscribers');
 const { startPolling, stopPolling } = require('./services/transactionPollingService');
@@ -28,6 +41,9 @@ const { startReminderScheduler, stopReminderScheduler } = require('./services/re
 const { startWorker: startTxQueueWorker, stopWorker: stopTxQueueWorker } = require('./services/transactionQueueService');
 const { startSessionCleanupScheduler, stopSessionCleanupScheduler } = require('./services/sessionCleanupService');
 const { startReconciliationScheduler, stopReconciliationScheduler } = require('./services/reconciliationService');
+const { startAuditLogCleanupScheduler, stopAuditLogCleanupScheduler } = require('./services/auditLogCleanupService');
+const { closeQueue } = require('./queue/transactionQueue');
+const bullMQRetryService = require('./services/bullMQRetryService');
 const { initializeRetryQueue, setupMonitoring } = require('./config/retryQueueSetup');
 const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/requestLogger');
@@ -36,6 +52,7 @@ const { requireAdminAuth } = require('./middleware/auth');
 const { runConsistencyCheck } = require('./controllers/consistencyController');
 const { healthCheck } = require('./controllers/healthController');
 const logger = require('./utils/logger');
+const { startHeapMonitoring } = require('./utils/heapMonitoring');
 
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
@@ -81,6 +98,10 @@ const concurrentMiddleware = createConcurrentRequestMiddleware({
   rateLimit: { windowMs: 60000, maxRequests: 100 },
   deduplicationTtlMs: 60000,
 });
+// ── Metrics ───────────────────────────────────────────────────────────────────
+// Mounted before the rate-limiter so Prometheus scrapes are never throttled.
+app.use('/metrics', metricsRoute);
+
 app.use(concurrentMiddleware.rateLimiter((req) => req.ip));
 app.use(concurrentMiddleware.requestQueue());
 
@@ -99,6 +120,27 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/auth', authRoutes);
 app.get('/api/consistency', requireAdminAuth, runConsistencyCheck);
 app.get('/health', healthCheck);
+
+// Issue #671: OpenAPI/Swagger documentation
+try {
+  const swaggerSpecs = require('./config/swagger');
+  app.get('/api/docs.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.json(swaggerSpecs);
+  });
+
+  // Swagger UI (development only)
+  if (process.env.NODE_ENV !== 'production') {
+    const swaggerUi = require('swagger-ui-express');
+    app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, {
+      swaggerOptions: {
+        url: '/api/docs.json',
+      },
+    }));
+  }
+} catch (err) {
+  logger.warn('Swagger documentation not available', { error: err.message });
+}
 
 // ── Error handling ────────────────────────────────────────────────────────────
 app.use(notFoundHandler);
@@ -138,6 +180,9 @@ mongoose.connection.on('error', (err) =>
 );
 
 connectWithRetry().then(async () => {
+  // Start heap monitoring to detect memory leaks early
+  startHeapMonitoring();
+
   // Seed default system config entries on first run
   const SystemConfig = require('./models/systemConfigModel');
   const DEFAULTS = [
@@ -168,6 +213,7 @@ connectWithRetry().then(async () => {
   startReminderScheduler();
   startSessionCleanupScheduler();
   startReconciliationScheduler();
+  startAuditLogCleanupScheduler();
   registerPaymentSavedSubscribers();
 
   // Only initialise BullMQ when Redis is configured
@@ -177,9 +223,17 @@ connectWithRetry().then(async () => {
       setupMonitoring(60000);
       logger.info('All services initialized successfully');
     } catch (error) {
-      logger.error('Failed to initialize retry queue system', { error: error.message });
+      // The HTTP server still boots, but the retry/dead-letter pipeline is dead —
+      // failed payments would silently never be retried. Fail loudly so the broken
+      // state is visible in logs and via /health (retryQueue.status: failed).
+      logger.error(
+        '[CRITICAL] Retry queue failed to initialize — failed payments will NOT be retried. ' +
+        'Investigate Redis/BullMQ connection immediately.',
+        { error: error.message }
+      );
     }
   } else {
+    logger.warn('REDIS_HOST is not configured — using MongoDB retry backend. Rate-limit counters are in-process only and will reset on restart. Set REDIS_HOST for production deployments.');
     logger.info('All services initialized successfully (MongoDB retry backend)');
   }
 });
@@ -194,15 +248,27 @@ const server = require.main === module
 async function shutdown(signal) {
   logger.info(`Received ${signal} signal — starting graceful shutdown`);
 
-  const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS, 10) || 10_000;
+  const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS, 10) || 30_000;
 
   // Stop background services — no new work accepted
   stopPolling();
   retrySelector.stop();
-  stopTxQueueWorker();
   stopReminderScheduler();
   stopSessionCleanupScheduler();
   stopReconciliationScheduler();
+  stopAuditLogCleanupScheduler();
+
+  try {
+    await stopTxQueueWorker();
+    await closeQueue();
+    await bullMQRetryService.shutdownQueue();
+    await require('./services/sseService').close();
+    await require('./services/distributedLock').close();
+    await require('./services/schoolCacheInvalidator').close();
+    logger.info('BullMQ resources closed cleanly');
+  } catch (err) {
+    logger.error('Error closing BullMQ resources during shutdown', { error: err.message });
+  }
 
   // Force exit after SHUTDOWN_TIMEOUT_MS regardless of in-flight requests
   const forceExitTimer = setTimeout(() => {

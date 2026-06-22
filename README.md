@@ -1,38 +1,42 @@
 # StellarEduPay
 
-A decentralized school fee payment system built on the Stellar blockchain network. StellarEduPay enables transparent, immutable, and verifiable school fee payments — eliminating manual reconciliation, reducing fraud, and providing instant proof of payment for both schools and parents.
+A production-grade, multi-tenant school fee payment system built on the Stellar blockchain. StellarEduPay delivers transparent, immutable, and verifiable fee payments — eliminating manual reconciliation, reducing fraud, and providing instant proof of payment for schools and parents alike.
 
 [![CI](https://github.com/manuelusman73-png/StellarEduPay/actions/workflows/ci.yml/badge.svg)](https://github.com/manuelusman73-png/StellarEduPay/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [Problem Statement](#-problem-statement)
-- [Solution Overview](#-solution-overview)
-- [How Stellar Integration Works](#-how-stellar-integration-works)
-- [Key Features](#-key-features)
-- [Architecture](#-architecture)
-- [Tech Stack](#-tech-stack)
-- [Getting Started](#-getting-started)
+- [Problem Statement](#problem-statement)
+- [Solution Overview](#solution-overview)
+- [How Stellar Integration Works](#how-stellar-integration-works)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
-  - [Funding Your Testnet Wallet with Friendbot](#funding-your-testnet-wallet-with-friendbot)
   - [Configuration](#configuration)
   - [Running the Application](#running-the-application)
-- [Environment Variables](#-environment-variables)
-- [API Usage Examples](#-api-usage-examples)
-- [Testing](#-testing)
-- [Project Structure](#-project-structure)
-- [Documentation](#-documentation)
-- [Monitoring & Observability](#-monitoring--observability)
-- [Contributing](#-contributing)
-- [License](#-license)
+- [Environment Variables](#environment-variables)
+- [API Reference](#api-reference)
+- [Security](#security)
+- [Testing](#testing)
+- [Monitoring & Observability](#monitoring--observability)
+- [Database Migrations](#database-migrations)
+- [Backup & Recovery](#backup--recovery)
+- [Project Structure](#project-structure)
+- [Documentation](#documentation)
+- [Changelog](#changelog)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
-## 🎯 Problem Statement
+## Problem Statement
 
 Traditional school fee payment systems face several challenges:
 
@@ -43,31 +47,22 @@ Traditional school fee payment systems face several challenges:
 - **High Transaction Fees**: Traditional payment processors charge significant fees
 - **Poor Audit Trail**: Difficult to track payment history and generate reports
 
-## 💡 Solution Overview
+## Solution Overview
 
-StellarEduPay leverages the **Stellar blockchain network** to solve these problems:
+StellarEduPay leverages the **Stellar blockchain** to solve these problems:
 
-1. **Instant Verification**: Payments are confirmed on the blockchain within 3-5 seconds
-2. **Immutable Records**: Every transaction is permanently recorded and cannot be altered
-3. **Automatic Reconciliation**: Student IDs embedded in transaction memos enable automatic matching
-4. **Low Fees**: Stellar transactions cost a fraction of a cent
+1. **Instant Verification**: Payments confirmed on-chain within 3–5 seconds
+2. **Immutable Records**: Every transaction is permanently recorded
+3. **Automatic Reconciliation**: Student IDs embedded in transaction memos enable zero-touch matching
+4. **Low Fees**: Stellar charges ~$0.000001 per transaction
 5. **Transparent Audit Trail**: Anyone can verify payments on public blockchain explorers
-6. **Multi-Asset Support**: Accept payments in XLM (Stellar Lumens) or USDC (stablecoin)
+6. **Multi-Asset Support**: Accept XLM (Stellar Lumens) or USDC (stablecoin)
 
 ---
 
-## 🌟 How Stellar Integration Works
+## How Stellar Integration Works
 
-### The Stellar Blockchain
-
-[Stellar](https://stellar.org) is a decentralized, open-source blockchain network designed for fast, low-cost financial transactions. Unlike traditional payment systems, Stellar:
-
-- Confirms transactions in **3-5 seconds**
-- Charges **0.00001 XLM per transaction** (~$0.000001)
-- Supports **multiple currencies** (XLM, USDC, and custom tokens)
-- Provides **public transaction records** for transparency
-
-### Payment Flow with Stellar
+### Payment Flow
 
 ```
 ┌─────────────┐
@@ -75,29 +70,28 @@ StellarEduPay leverages the **Stellar blockchain network** to solve these proble
 │   Wallet    │
 └──────┬──────┘
        │ 1. Send XLM/USDC with student ID as memo
-       │
        ▼
-┌─────────────────────────────────────────┐
-│      Stellar Blockchain Network         │
-│  (Transaction recorded immutably)       │
-└──────┬──────────────────────────────────┘
-       │ 2. Transaction confirmed in 3-5 seconds
-       │
+┌──────────────────────────────────┐
+│    Stellar Blockchain Network    │
+│  (Transaction recorded in ~5s)   │
+└──────┬───────────────────────────┘
+       │ 2. Transaction confirmed
        ▼
 ┌─────────────┐
 │   School    │
 │   Wallet    │
 └──────┬──────┘
-       │ 3. Backend syncs from Horizon API
-       │
+       │ 3. Background poller syncs via Horizon API
        ▼
-┌─────────────────────────────────────────┐
-│      StellarEduPay Backend              │
-│  • Reads transaction from blockchain    │
-│  • Extracts memo (student ID)           │
-│  • Validates amount against fee         │
-│  • Updates student payment status       │
-└─────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│         StellarEduPay Backend          │
+│  • Reads transaction from blockchain   │
+│  • Decrypts/extracts memo (student ID) │
+│  • Validates amount against fee        │
+│  • Updates student payment status      │
+│  • Fires webhook & SSE event           │
+│  • Emits receipt                       │
+└────────────────────────────────────────┘
 ```
 
 ### The Memo Field: Automatic Payment Matching
@@ -109,940 +103,585 @@ Transaction Details:
   From:   Parent's Wallet (GPARENT...)
   To:     School Wallet (GSCHOOL...)
   Amount: 250 XLM
-  Memo:   "STU001"  ← Student ID for automatic matching
+  Memo:   "STU001"   ← Student ID for automatic matching
 ```
 
-When the backend syncs transactions, it:
-1. Reads the memo field
-2. Matches it to a registered student
-3. Validates the amount against the student's fee
-4. Automatically updates the payment status
+Memos are optionally encrypted at rest for privacy (see `MEMO_ENCRYPTION_KEY` in env vars).
 
-**No manual reconciliation needed!**
+### Read-Only Blockchain Integration
 
-### Read-Only Integration
-
-**Important**: The backend never holds or requires the school's private key. It only:
+The backend **never holds the school's private key**. It only:
 - **Reads** transactions from the public Stellar Horizon API
 - **Verifies** payment amounts and memos
 - **Records** payment metadata in MongoDB
 
-The school administrator controls the wallet privately through their own Stellar wallet application.
+The school administrator controls their wallet privately through their own Stellar wallet application.
 
 ### Accepted Assets
 
-StellarEduPay accepts two types of payments:
-
 | Asset | Type | Description |
 |-------|------|-------------|
-| **XLM** | Native | Stellar's native cryptocurrency (Lumens) |
+| **XLM** | Native | Stellar's native cryptocurrency |
 | **USDC** | Stablecoin | USD-pegged stablecoin for price stability |
 
-Assets are configured in [`backend/src/config/stellarConfig.js`](backend/src/config/stellarConfig.js). Additional assets can be added by updating the configuration.
-
-### Testnet vs Mainnet
-
-- **Testnet**: For development and testing (free test XLM from Friendbot)
-- **Mainnet**: For production with real assets
-
-Controlled by the `STELLAR_NETWORK` environment variable.
+Assets are configured per school and can be extended in [`backend/src/config/stellarConfig.js`](backend/src/config/stellarConfig.js).
 
 ---
 
-## 🚰 Funding Your Testnet Wallet with Friendbot
+## Key Features
 
-When working on the **Stellar Testnet**, every account must be funded before it can send or receive transactions. Friendbot is a free faucet provided by the Stellar Development Foundation that deposits **10,000 test XLM** into any testnet account instantly.
+**Blockchain & Payments**
+- Blockchain-based payments with automatic on-chain reconciliation
+- Multi-asset support (XLM, USDC) configurable per school
+- Fee validation: exact match, overpayment, underpayment detection
+- Idempotent payment verification (safe to retry without double-recording)
+- Suspicious payment detection with configurable multiplier thresholds
+- Fee Bump transaction support
 
-> ⚠️ Friendbot only works on **testnet**. Never use it (or expect it) on mainnet.
+**Multi-School & Authentication**
+- Multi-tenant architecture: isolated wallets, students, and records per school
+- JWT authentication with refresh tokens and HttpOnly cookie storage
+- TOTP-based multi-factor authentication (MFA)
+- Step-up authentication for sensitive admin operations
+- Role-based access (admin vs. parent)
+- Per-school student registration quotas
 
-### Why You Need This
+**Reliability & Resilience**
+- Durable transaction queue (BullMQ/Redis or MongoDB fallback)
+- Automatic retry for failed verifications with exponential backoff
+- Circuit breaker on the Stellar Horizon client
+- Rate-limited Stellar client (Bottleneck) to respect Horizon quotas
+- Concurrent request handling with configurable queue and circuit breaker
+- Graceful shutdown (SIGTERM/SIGINT) with in-flight request drain
+- Stuck-payment reconciliation on startup
 
-A newly generated Stellar keypair does not exist on the ledger until it receives its first funding. Attempting to use an unfunded account will result in a `tx_insufficient_balance` or account-not-found error.
+**Operations & Observability**
+- JSON-structured logs via Winston with daily rotation
+- Prometheus metrics endpoint (`/metrics`)
+- Grafana dashboard provisioning (included)
+- Health check endpoint (`/health`) with degraded/unhealthy states
+- Server-Sent Events (SSE) for real-time payment notifications
+- Configurable log level at runtime via admin API
 
-### Option 1: Stellar Laboratory (Browser)
+**Data & Compliance**
+- Payment plans (installment support)
+- Fee adjustment engine with composable rules
+- Dispute management workflow
+- Payment receipts
+- Audit log with pagination, date filtering, and TTL cleanup
+- Soft-delete for students and fee structures
+- PII protection (student data redaction)
+- Memo encryption at rest
 
-1. Go to [https://laboratory.stellar.org/#account-creator?network=test](https://laboratory.stellar.org/#account-creator?network=test)
-2. Click **"Generate keypair"** to create a new public/secret key pair, or paste your existing public key.
-3. Click **"Fund account with Friendbot"**.
-4. You'll see a success response — your account now has 10,000 test XLM.
-
-### Option 2: Friendbot HTTP API (curl)
-
-Replace `YOUR_PUBLIC_KEY` with your actual Stellar public key (starts with `G`):
-
-```bash
-curl "https://friendbot.stellar.org?addr=YOUR_PUBLIC_KEY"
-```
-
-Successful response:
-
-```json
-{
-  "hash": "abc123...",
-  "result_xdr": "...",
-  "_links": { ... }
-}
-```
-
-### Option 3: JavaScript / Node.js
-
-If you want to fund an account programmatically in a script or test setup:
-
-```js
-const { Keypair } = require('@stellar/stellar-sdk');
-const fetch = require('node-fetch'); // or use native fetch in Node 18+
-
-async function fundTestnetAccount(publicKey) {
-  const response = await fetch(
-    `https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`
-  );
-  if (!response.ok) {
-    throw new Error(`Friendbot failed: ${response.statusText}`);
-  }
-  const data = await response.json();
-  console.log('Account funded! Tx hash:', data.hash);
-  return data;
-}
-
-// Example usage
-const keypair = Keypair.random();
-console.log('Public Key:', keypair.publicKey());
-console.log('Secret Key:', keypair.secret());
-
-fundTestnetAccount(keypair.publicKey());
-```
-
-### Verifying the Balance
-
-After funding, confirm the account exists and check its balance:
-
-```bash
-curl "https://horizon-testnet.stellar.org/accounts/YOUR_PUBLIC_KEY" \
-  | python -m json.tool | grep -A3 '"balances"'
-```
-
-Or visit the Stellar Testnet Explorer:
-
-```
-https://stellar.expert/explorer/testnet/account/YOUR_PUBLIC_KEY
-```
-
-### Funding in This Project
-
-When setting up StellarEduPay for local development:
-
-1. Generate your school wallet (see [Step 2 in Installation](#installation)).
-2. Copy the **Public Key** (`G...`).
-3. Run the Friendbot curl command above with that public key.
-4. Set `SCHOOL_WALLET_ADDRESS` in `backend/.env` to that public key.
-5. The backend will now be able to read incoming testnet transactions for that wallet.
-
-> The backend only reads from the blockchain — it never needs the secret key. Keep your secret key private.
+**Developer Experience**
+- OpenAPI/Swagger docs at `/api/docs` (development mode)
+- Database migrations runner with 16 bundled migrations
+- Seed script for local development
+- Comprehensive test suite (unit + integration, 100+ test files)
+- Docker Compose with MongoDB replica set, Redis, automated backups, and Prometheus/Grafana
 
 ---
 
-## ✨ Key Features
-
-- ✅ **Blockchain-Based Payments**: Immutable, transparent transaction records
-- ✅ **Automatic Reconciliation**: Student ID memos enable instant payment matching
-- ✅ **Multi-Asset Support**: Accept XLM or USDC payments
-- ✅ **Fee Validation**: Automatic detection of underpayments, overpayments, and exact matches
-- ✅ **Payment Limits**: Configurable min/max thresholds for security
-- ✅ **Transaction Verification**: Verify any payment by transaction hash
-- ✅ **Payment History**: Complete audit trail for each student
-- ✅ **Retry Mechanism**: Automatic retry for failed verifications during network outages
-- ✅ **Background Polling**: Continuous sync of new payments from the blockchain
-- ✅ **RESTful API**: Clean, documented endpoints for all operations
-- ✅ **Comprehensive Testing**: Full test coverage with Jest
-
----
-
-## 🏗️ Architecture
+## Architecture
 
 StellarEduPay is a three-tier application:
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     Parent/Admin Browser                      │
-└────────────────────────┬─────────────────────────────────────┘
-                         │ HTTPS
-                         ▼
-┌──────────────────────────────────────────────────────────────┐
-│                   Next.js Frontend (React)                    │
-│  • Payment forms  • Student dashboard  • Reports             │
-└────────────────────────┬─────────────────────────────────────┘
-                         │ REST API
-                         ▼
-┌──────────────────────────────────────────────────────────────┐
-│              Express.js Backend (Node.js)                     │
-│  • Payment controller  • Stellar service  • Validation       │
-└─────────┬────────────────────────────────────┬───────────────┘
-          │                                    │
-          ▼                                    ▼
-┌─────────────────────┐          ┌────────────────────────────┐
-│      MongoDB        │          │   Stellar Horizon API      │
-│  • Students         │          │  • Transaction ledger      │
-│  • Payments         │          │  • Account operations      │
-│  • Fee structures   │          │  • Asset information       │
-└─────────────────────┘          └────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                     Parent / Admin Browser                     │
+└───────────────────────────┬────────────────────────────────────┘
+                            │ HTTPS
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│              Next.js Frontend (React)                          │
+│  Payment forms · Student dashboard · Disputes · Audit logs     │
+└───────────────────────────┬────────────────────────────────────┘
+                            │ REST API / SSE
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│             Express.js Backend (Node.js 20+)                   │
+│  Auth · Payments · Students · Schools · Reports · Webhooks     │
+│  Fee Adjustments · Disputes · Receipts · Audit Logs            │
+└──────────┬─────────────────────────────────┬───────────────────┘
+           │                                 │
+           ▼                                 ▼
+┌──────────────────────┐       ┌─────────────────────────────┐
+│      MongoDB         │       │    Stellar Horizon API      │
+│  (Replica Set)       │       │  Transaction ledger         │
+│  Students · Payments │       │  Account info · Assets      │
+│  Schools · Audit     │       └─────────────────────────────┘
+└──────────────────────┘
+           │
+           ▼
+┌──────────────────────┐
+│        Redis         │
+│  BullMQ queues       │
+│  Rate-limit counters │
+└──────────────────────┘
 ```
 
-### Key Components
+### Key Backend Components
 
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
-| **Express App** | [`backend/src/app.js`](backend/src/app.js) | HTTP server, route mounting, error handling |
-| **Stellar Service** | [`backend/src/services/stellarService.js`](backend/src/services/stellarService.js) | Ledger sync, transaction verification, fee validation |
-| **Stellar Config** | [`backend/src/config/stellarConfig.js`](backend/src/config/stellarConfig.js) | Horizon server, accepted assets, network configuration |
-| **Payment Controller** | [`backend/src/controllers/paymentController.js`](backend/src/controllers/paymentController.js) | Payment instructions, verification, sync endpoints |
-| **Student Controller** | [`backend/src/controllers/studentController.js`](backend/src/controllers/studentController.js) | Student CRUD, automatic fee assignment |
-| **Fee Controller** | [`backend/src/controllers/feeController.js`](backend/src/controllers/feeController.js) | Fee structure management |
-| **Retry Service** | [`backend/src/services/retryService.js`](backend/src/services/retryService.js) | Automatic retry for failed verifications |
-| **Transaction Service** | [`backend/src/services/transactionService.js`](backend/src/services/transactionService.js) | Background polling for new payments |
+| Express App | `backend/src/app.js` | HTTP server, middleware, route mounting |
+| Stellar Service | `backend/src/services/stellarService.js` | Horizon API, fee validation, transaction parsing |
+| Transaction Polling | `backend/src/services/transactionPollingService.js` | Background blockchain sync |
+| Transaction Queue | `backend/src/queue/transactionQueue.js` | Durable BullMQ processing queue |
+| Retry Service | `backend/src/services/retryServiceSelector.js` | BullMQ or MongoDB retry backend |
+| Webhook Service | `backend/src/services/webhookService.js` | HMAC-signed outbound webhooks |
+| Audit Service | `backend/src/services/auditService.js` | Immutable audit log writes |
+| Report Service | `backend/src/services/reportService.js` | CSV/JSON report generation |
+| Rate-Limited Client | `backend/src/services/stellarRateLimitedClient.js` | Horizon API with Bottleneck + circuit breaker |
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Blockchain** | Stellar Network | Payment ledger and transaction processing |
-| **Backend** | Node.js + Express | REST API server |
-| **Database** | MongoDB + Mongoose | Student records and payment metadata |
-| **Frontend** | Next.js (React) | User interface |
-| **Blockchain SDK** | Stellar SDK | Horizon API integration |
-| **Testing** | Jest + Supertest | Unit and integration tests |
-| **DevOps** | Docker + Docker Compose | Containerization and deployment |
+| Layer | Technology |
+|-------|-----------|
+| Blockchain | Stellar Network + Stellar SDK v12 |
+| Backend | Node.js 20+ · Express 4 |
+| Database | MongoDB 7 (Replica Set) · Mongoose 8 |
+| Queue | BullMQ 5 · Redis 7 |
+| Frontend | Next.js (React) |
+| Auth | JWT · jsonwebtoken · TOTP (MFA) |
+| Observability | Winston · Prometheus (prom-client) · Grafana |
+| Testing | Jest 29 · Supertest |
+| DevOps | Docker · Docker Compose v2 · GitHub Actions |
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
-Before you begin, ensure you have the following installed:
+- **Node.js** ≥ 20 ([download](https://nodejs.org/))
+- **MongoDB 7** running as a **replica set** (required for multi-document transactions)
+- **Redis 7** (required for BullMQ; the service degrades gracefully without it but Redis is recommended for production)
+- **Git**
+- **Docker + Docker Compose v2** (optional, but easiest path)
 
-- **Node.js** 18 or higher ([Download](https://nodejs.org/))
-- **npm** 9 or higher (bundled with Node.js)
-- **MongoDB** 6.0 or higher, running as a **replica set** ([Download](https://www.mongodb.com/try/download/community) or use [MongoDB Atlas](https://www.mongodb.com/atlas))
-- **Git** ([Download](https://git-scm.com/downloads))
-- **Docker + Docker Compose v2** (optional, for containerized deployment) ([Download](https://www.docker.com/get-started))
-
-> ⚠️ **MongoDB Replica Set Required**
+> **MongoDB Replica Set**: StellarEduPay uses MongoDB multi-document transactions to atomically record payments. A standalone `mongod` will fail at runtime.
 >
-> StellarEduPay uses [MongoDB multi-document transactions](https://www.mongodb.com/docs/manual/core/transactions/) to atomically record a payment and update the student's fee status. MongoDB only supports multi-document transactions on replica sets (or sharded clusters). A standalone `mongod` instance will cause transaction operations to fail at runtime.
->
-> **Local development** — start a single-node replica set instead of a plain `mongod`:
+> For local development without Docker:
 > ```bash
 > mongod --replSet rs0 --dbpath /path/to/data
-> # In a separate terminal, initialise the replica set once:
+> # Once, in a separate terminal:
 > mongosh --eval "rs.initiate()"
 > ```
-> Then use `MONGO_URI=mongodb://localhost:27017/stellaredupay?replicaSet=rs0` in your `.env`.
+> Then use `MONGO_URI=mongodb://localhost:27017/stellaredupay?replicaSet=rs0`.
 >
-> **Docker Compose** — the provided `docker-compose.yml` already configures MongoDB as a single-node replica set; no extra steps are needed.
->
-> **MongoDB Atlas** — all Atlas clusters (including the free M0 tier) run as replica sets by default.
+> Docker Compose handles this automatically.
 
 ### Installation
 
-#### Step 1: Clone the Repository
+#### Step 1: Clone the repository
 
 ```bash
 git clone https://github.com/yourusername/StellarEduPay.git
 cd StellarEduPay
 ```
 
-#### Step 2: Generate a School Wallet
-
-You need a Stellar wallet to receive payments. Generate one using the Stellar Laboratory:
-
-**Option A: Using Stellar Laboratory (Recommended for beginners)**
-
-1. Visit [Stellar Laboratory](https://laboratory.stellar.org/#account-creator?network=test)
-2. Click "Generate keypair"
-3. Copy the **Public Key** (starts with `G...`) — this is your `SCHOOL_WALLET_ADDRESS`
-4. **Securely save the Secret Key** (starts with `S...`) — never share this or commit it to version control
-5. Click "Fund account with Friendbot" to get free test XLM (testnet only)
-
-**Option B: Using the provided script**
+#### Step 2: Generate a school wallet
 
 ```bash
-# From the backend directory (recommended — dependencies are guaranteed to be available)
 cd backend
 npm install
 npm run create-wallet
 ```
 
-Or from the project root after installing backend dependencies:
+This outputs a **Public Key** (`G...`) and a **Secret Key** (`S...`). Copy the public key — you need it in your `.env`. **Never commit the secret key.**
+
+Alternatively, use [Stellar Laboratory](https://laboratory.stellar.org/#account-creator?network=test) and click "Fund account with Friendbot" to activate the testnet account.
+
+#### Step 3: Install dependencies
 
 ```bash
+# From project root
+npm install
 cd backend && npm install && cd ..
-node scripts/create-school-wallet.js
-```
-
-This will output:
-```
-Public Key:  G_EXAMPLE_SCHOOL_WALLET_ADDRESS_HERE
-Secret Key:  SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-
-⚠️  Save the secret key securely! The backend only needs the public key.
-```
-
-#### Step 3: Install Dependencies
-
-**Backend:**
-```bash
-cd backend
-npm install
-```
-
-**Frontend:**
-```bash
-cd ../frontend
-npm install
-```
-
-**Root (for tests):**
-```bash
-cd ..
-npm install
+cd frontend && npm install && cd ..
 ```
 
 ### Configuration
 
-#### Step 4: Configure Backend Environment Variables
-
-Copy `backend/.env.example` to `backend/.env` and fill in real values:
+#### Step 4: Configure the backend
 
 ```bash
 cp backend/.env.example backend/.env
 ```
 
-Open `backend/.env` and replace every placeholder with your actual credentials
-(e.g. set `SCHOOL_WALLET_ADDRESS` to the public key generated in Step 2,
-and set `JWT_SECRET` to a long random string).
+Edit `backend/.env`. The minimum required values are:
 
-> `backend/.env.example` contains only placeholder values — never real secrets.
-> See the inline comments in that file for how to generate each value.
-
-For the frontend, copy its example file as well:
 ```bash
-cp frontend/.env.example frontend/.env.local
+MONGO_URI=mongodb://localhost:27017/stellaredupay?replicaSet=rs0
+SCHOOL_WALLET_ADDRESS=G...          # Public key from Step 2
+STELLAR_NETWORK=testnet             # or mainnet
+JWT_SECRET=<random 64-char string>  # openssl rand -hex 32
 ```
 
-Edit `backend/.env` with your configuration:
+See [Environment Variables](#environment-variables) for the full reference.
+
+#### Step 5: Configure the frontend
 
 ```bash
-# ── Required ────────────────────────────────────────────────
-# MongoDB connection string
-MONGO_URI=mongodb://localhost:27017/stellaredupay
-
-# School's Stellar public key (from Step 2)
-SCHOOL_WALLET_ADDRESS=G_EXAMPLE_SCHOOL_WALLET_ADDRESS_HERE
-
-# ── Stellar Network ──────────────────────────────────────────
-# Use "testnet" for development, "mainnet" for production
-STELLAR_NETWORK=testnet
-
-# ── Server ───────────────────────────────────────────────────
-PORT=5000
-
-# ── Payment Limits (Optional) ─────────────────────────────────
-# Minimum payment amount in XLM/USDC
-MIN_PAYMENT_AMOUNT=0.01
-
-# Maximum payment amount in XLM/USDC
-MAX_PAYMENT_AMOUNT=100000
-
-# ── Background Jobs (Optional) ────────────────────────────────
-# How often to poll for new payments (milliseconds)
-POLL_INTERVAL_MS=30000
-
-# How often to retry failed verifications (milliseconds)
-RETRY_INTERVAL_MS=60000
-
-# Maximum retry attempts before giving up
-RETRY_MAX_ATTEMPTS=10
-```
-
-#### Step 5: Configure Frontend Environment Variables
-
-Create a `.env.local` file in the `frontend/` directory:
-
-```bash
-cd ../frontend
-cp .env.local.example .env.local
-```
-
-Edit `frontend/.env.local`:
-
-```bash
-NEXT_PUBLIC_API_URL=http://localhost:5000/api
+cp frontend/.env.local.example frontend/.env.local
+# Set NEXT_PUBLIC_API_URL=http://localhost:5000/api
 ```
 
 ### Running the Application
 
-#### Option A: Run Locally (Development)
+#### Option A: Docker Compose (recommended)
 
-**Terminal 1 - Start MongoDB** (if running locally):
 ```bash
-mongod --dbpath /path/to/your/data/directory
+# Fund your testnet wallet first (Step 2), then:
+SCHOOL_WALLET_ADDRESS=G... docker compose up --build
 ```
 
-**Terminal 2 - Start Backend**:
+This starts MongoDB (replica set), Redis, backend, frontend, and a nightly backup container. Prometheus + Grafana are available via the monitoring compose file:
+
 ```bash
-cd backend
-npm run dev
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up --build
 ```
 
-You should see:
+#### Option B: Local development
+
+**Terminal 1 — MongoDB:**
+```bash
+mongod --replSet rs0 --dbpath /path/to/data
+```
+
+**Terminal 2 — Backend:**
+```bash
+cd backend && npm run dev
+```
+
+Expected output:
 ```
 MongoDB connected
 Server running on port 5000
-Background polling started (interval: 30000ms)
-Retry worker started (interval: 60000ms)
+Background polling started
+Retry worker started
 ```
 
-**Terminal 3 - Start Frontend**:
+**Terminal 3 — Frontend:**
 ```bash
-cd frontend
-npm run dev
+cd frontend && npm run dev
 ```
 
-Visit **http://localhost:3000** in your browser.
+Visit **http://localhost:3000**.
 
-#### Option B: Run with Docker Compose
-
-```bash
-# From the project root — replace the value with your actual public key
-# MongoDB credentials are set via environment variables (defaults: root/password)
-SCHOOL_WALLET_ADDRESS=G_EXAMPLE_SCHOOL_WALLET_ADDRESS_HERE docker compose up --build
-```
-
-To use custom MongoDB credentials, set them before running:
+#### Step 6: Run database migrations
 
 ```bash
-export MONGO_ROOT_USERNAME=myuser
-export MONGO_ROOT_PASSWORD=mysecurepassword
-export SCHOOL_WALLET_ADDRESS=G_EXAMPLE_SCHOOL_WALLET_ADDRESS_HERE
-docker compose up --build
+node scripts/migrate.js
 ```
 
-> On older Docker installations, use `docker-compose` (with a hyphen) instead of `docker compose`.
+Migrations are idempotent and safe to re-run.
 
-This will start:
-- MongoDB on port 27017 (with authentication enabled)
-- Backend on port 5000
-- Frontend on port 3000
-
-**Security Note**: MongoDB is configured with root authentication. The default credentials (root/password) should be changed in production. Generate secure passwords with:
+#### Step 7: Seed sample data (optional)
 
 ```bash
-openssl rand -base64 32
+node scripts/seed-test-data.js          # Upsert (safe to re-run)
+node scripts/seed-test-data.js --clean  # Drop and recreate
 ```
-
-### Initial Setup: Seed Data
-
-Once the application is running, seed some initial data:
-
-#### Using the Seed Script (Recommended)
-
-The seed script populates the database with sample fee structures and students for local development and testing.
-
-**Normal run (upsert — safe to re-run):**
-```bash
-node scripts/seed-test-data.js
-```
-Re-running this command is safe: all inserts use upsert, so no duplicate records are created.
-
-**Clean run (drop and recreate):**
-```bash
-node scripts/seed-test-data.js --clean
-```
-Use `--clean` when you want a completely fresh dataset — it drops all seeded collections before re-seeding. Useful after schema changes or when you want to reset to a known state.
-
-| Option | Behaviour | When to use |
-|--------|-----------|-------------|
-| _(none)_ | Upsert — creates or updates records | Day-to-day development, CI |
-| `--clean` | Drop collections then re-seed | Schema changes, full reset |
-
-#### Manual curl commands
-```bash
-curl -X POST http://localhost:5000/api/fees \
-  -H "Content-Type: application/json" \
-  -d '{
-    "className": "Grade 5A",
-    "feeAmount": 250,
-    "description": "Annual tuition fees",
-    "academicYear": "2026"
-  }'
-```
-
-**2. Register a student:**
-```bash
-curl -X POST http://localhost:5000/api/students \
-  -H "Content-Type: application/json" \
-  -d '{
-    "studentId": "STU001",
-    "name": "Alice Johnson",
-    "class": "Grade 5A"
-  }'
-```
-
-The student's fee will be automatically assigned from the class fee structure.
-
-**3. Get payment instructions:**
-```bash
-curl http://localhost:5000/api/payments/instructions/STU001
-```
-
-Response:
-```json
-{
-  "walletAddress": "G_EXAMPLE_SCHOOL_WALLET_ADDRESS_HERE",
-  "memo": "STU001",
-  "acceptedAssets": [
-    { "code": "XLM", "type": "native", "displayName": "Stellar Lumens" },
-    { "code": "USDC", "type": "credit_alphanum4", "displayName": "USD Coin" }
-  ],
-  "paymentLimits": {
-    "min": 0.01,
-    "max": 100000
-  },
-  "note": "Include the student ID exactly as the memo when sending payment."
-}
-```
-
-**4. Make a test payment:**
-
-Use a Stellar wallet (e.g., [Stellar Laboratory](https://laboratory.stellar.org/#txbuilder?network=test)) to send XLM to the school wallet address with memo `STU001`.
-
-**5. Sync payments:**
-```bash
-curl -X POST http://localhost:5000/api/payments/sync
-```
-
-The backend will fetch recent transactions from the Stellar network and automatically match them to students.
 
 ---
 
-## 🔐 Environment Variables
+## Environment Variables
 
-### Backend Variables
+### Required
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MONGO_URI` | ✅ Yes | - | MongoDB connection string (e.g., `mongodb://localhost:27017/stellaredupay`) |
-| `SCHOOL_WALLET_ADDRESS` | ✅ Yes | - | School's Stellar public key (starts with `G...`) |
-| `STELLAR_NETWORK` | ✅ Yes | `testnet` | Stellar network: `testnet` or `mainnet` |
-| `PORT` | No | `5000` | Backend server port |
-| `HORIZON_URL` | No | Auto | Stellar Horizon API URL (auto-detected from network) |
-| `USDC_ISSUER` | No | Auto | USDC issuer address (auto-detected from network) |
-| `MIN_PAYMENT_AMOUNT` | No | `0.01` | Minimum payment amount in XLM/USDC |
-| `MAX_PAYMENT_AMOUNT` | No | `100000` | Maximum payment amount in XLM/USDC |
-| `POLL_INTERVAL_MS` | No | `30000` | Background polling interval (milliseconds) |
-| `RETRY_INTERVAL_MS` | No | `60000` | Retry worker interval (milliseconds) |
-| `RETRY_MAX_ATTEMPTS` | No | `10` | Maximum retry attempts for failed verifications |
-| `REDIS_HOST` | No | - | Redis hostname. When set, rate-limit counters are stored in Redis and survive server restarts. Without this, counters are in-process only and reset on restart (see note below). |
-| `REDIS_PORT` | No | `6379` | Redis port |
-| `REDIS_PASSWORD` | No | - | Redis password (if required) |
+| Variable | Description |
+|----------|-------------|
+| `MONGO_URI` | MongoDB connection string (must include replica set) |
+| `SCHOOL_WALLET_ADDRESS` | School's Stellar public key (`G...`) |
+| `STELLAR_NETWORK` | `testnet` or `mainnet` |
+| `JWT_SECRET` | Secret for signing JWTs (min 32 chars, keep private) |
 
-> **Rate limit persistence**: When `REDIS_HOST` is configured, rate-limit counters persist across server restarts and are shared across multiple instances. Without Redis, counters are stored in-process — a restart resets all counters, allowing a previously rate-limited client to make requests immediately after restart. This is a known limitation acceptable for single-process or development deployments.
+### Stellar
 
-### Frontend Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STELLAR_HORIZON_URL` | Auto from network | Override Horizon API URL |
+| `USDC_ISSUER` | Auto from network | USDC issuer address |
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NEXT_PUBLIC_API_URL` | ✅ Yes | - | Backend API base URL (e.g., `http://localhost:5000/api`) |
+### Payments
 
-### Configuration Validation
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MIN_PAYMENT_AMOUNT` | `0.01` | Minimum payment in XLM/USDC |
+| `MAX_PAYMENT_AMOUNT` | `100000` | Maximum payment in XLM/USDC |
+| `MEMO_ENCRYPTION_KEY` | — | 32-byte hex key for encrypting memos at rest |
 
-The application validates configuration on startup:
-- `MIN_PAYMENT_AMOUNT` must be positive (> 0)
-- `MAX_PAYMENT_AMOUNT` must be greater than `MIN_PAYMENT_AMOUNT`
-- `SCHOOL_WALLET_ADDRESS` must be a valid Stellar public key
+### Background Jobs
 
-If validation fails, the application will not start and will display a clear error message.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POLL_INTERVAL_MS` | `30000` | Blockchain sync interval |
+| `RETRY_INTERVAL_MS` | `60000` | Failed-verification retry interval |
+| `RETRY_MAX_ATTEMPTS` | `10` | Max retry attempts before giving up |
+
+### Redis / BullMQ
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_HOST` | — | Redis hostname. When unset, falls back to MongoDB retry backend. |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_PASSWORD` | — | Redis auth password |
+
+> Without `REDIS_HOST`, rate-limit counters are in-process only and reset on restart. Redis is strongly recommended for production.
+
+### Security & Rate Limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRUSTED_PROXY_HOPS` | `1` | Reverse-proxy hops for real IP resolution |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window |
+| `RATE_LIMIT_MAX_REQUESTS` | `100` | Max requests per window |
+| `VERIFY_RATE_LIMIT` | `10` | Max verify requests per minute |
+| `ALLOWED_ORIGINS` | — | Comma-separated CORS origins |
+
+### Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `5000` | HTTP server port |
+| `NODE_ENV` | — | Set to `production` to disable Swagger UI and enable combined logs |
+| `SHUTDOWN_TIMEOUT_MS` | `30000` | Graceful shutdown deadline |
+| `LOG_LEVEL` | `info` | `error` \| `warn` \| `info` \| `debug` |
+| `MAX_BODY_SIZE` | `1mb` | Request body size limit |
+
+### Docker Compose Tuning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MONGO_ROOT_USERNAME` | `root` | MongoDB root username |
+| `MONGO_ROOT_PASSWORD` | `password` | MongoDB root password (**change in production**) |
+| `BACKEND_MEM_LIMIT` | `512m` | Backend container memory limit |
+| `FRONTEND_MEM_LIMIT` | `256m` | Frontend container memory limit |
+| `REDIS_MEM_LIMIT` | `128m` | Redis container memory limit |
+| `MONGO_MEM_LIMIT` | `1g` | MongoDB container memory limit |
+| `BACKUP_DIR` | `./backups` | Host path for MongoDB backups |
+| `RETAIN_DAYS` | `7` | Days of backups to retain |
 
 ---
 
-## 📡 API Usage Examples
+## API Reference
+
+Full OpenAPI specification is available at `GET /api/docs.json` (or `/api/docs` in development). A static reference is in [`docs/api-spec.md`](docs/api-spec.md).
+
+### Authentication
+
+```
+POST /api/auth/register    Register a new admin account
+POST /api/auth/login       Login (returns JWT in HttpOnly cookie + response body)
+POST /api/auth/refresh     Refresh access token
+POST /api/auth/logout      Invalidate session
+POST /api/auth/mfa/setup   Set up TOTP MFA
+POST /api/auth/mfa/verify  Verify TOTP code
+```
+
+### Schools
+
+```
+POST   /api/schools            Create a school
+GET    /api/schools            List schools
+GET    /api/schools/:id        Get school details
+PUT    /api/schools/:id        Update school
+DELETE /api/schools/:id        Deactivate school
+```
 
 ### Students
 
-#### Register a Student
-```bash
-POST /api/students
-Content-Type: application/json
-
-{
-  "studentId": "STU001",
-  "name": "Alice Johnson",
-  "class": "Grade 5A"
-}
 ```
-
-Response `201`:
-```json
-{
-  "studentId": "STU001",
-  "name": "Alice Johnson",
-  "class": "Grade 5A",
-  "feeAmount": 250,
-  "feePaid": false
-}
-```
-
-#### Get All Students
-```bash
-GET /api/students
-```
-
-#### Get a Specific Student
-```bash
-GET /api/students/STU001
-```
-
-### Fee Structures
-
-#### Create a Fee Structure
-```bash
-POST /api/fees
-Content-Type: application/json
-
-{
-  "className": "Grade 5A",
-  "feeAmount": 250,
-  "description": "Annual tuition fees",
-  "academicYear": "2026"
-}
-```
-
-#### Get All Fee Structures
-```bash
-GET /api/fees
-```
-
-#### Get Fee for a Class
-```bash
-GET /api/fees/Grade%205A
+POST   /api/students           Register a student (auto-assigns fee from class)
+GET    /api/students           List students (paginated)
+GET    /api/students/:id       Get student
+PUT    /api/students/:id       Update student
+DELETE /api/students/:id       Soft-delete student
+POST   /api/students/bulk      Bulk import via CSV (respects school quota)
 ```
 
 ### Payments
 
-#### Get Payment Instructions
-```bash
-GET /api/payments/instructions/STU001
+```
+GET    /api/payments/instructions/:studentId   Payment instructions (wallet, memo, assets)
+POST   /api/payments/verify                    Verify a transaction by hash
+POST   /api/payments/sync                      Sync latest transactions from blockchain
+GET    /api/payments/:studentId                Payment history for a student
+GET    /api/payments/accepted-assets           Accepted assets for the school
+GET    /api/payments/limits                    Payment min/max limits
+GET    /api/payments/overpayments              List overpaid transactions (paginated)
+GET    /api/payments/pending                   List pending verifications (paginated)
 ```
 
-Response `200`:
-```json
-{
-  "walletAddress": "G_EXAMPLE_SCHOOL_WALLET_ADDRESS_HERE",
-  "memo": "STU001",
-  "acceptedAssets": [
-    {
-      "code": "XLM",
-      "type": "native",
-      "displayName": "Stellar Lumens"
-    },
-    {
-      "code": "USDC",
-      "type": "credit_alphanum4",
-      "displayName": "USD Coin"
-    }
-  ],
-  "paymentLimits": {
-    "min": 0.01,
-    "max": 100000
-  },
-  "note": "Include the student ID exactly as the memo when sending payment."
-}
+### Fee Structures
+
+```
+POST   /api/fees               Create a fee structure
+GET    /api/fees               List fee structures
+GET    /api/fees/:className    Get fee for a class
+PUT    /api/fees/:id           Update fee structure
+DELETE /api/fees/:id           Soft-delete fee structure
 ```
 
-#### Verify a Transaction
-```bash
-POST /api/payments/verify
-Content-Type: application/json
+### Fee Adjustments
 
-{
-  "txHash": "abc123def456..."
-}
+```
+POST   /api/fee-adjustments            Create adjustment rule
+GET    /api/fee-adjustments            List rules
+PUT    /api/fee-adjustments/:id        Update rule
+DELETE /api/fee-adjustments/:id        Delete rule
 ```
 
-Response `200`:
-```json
-{
-  "hash": "abc123def456...",
-  "memo": "STU001",
-  "amount": 250,
-  "feeAmount": 250,
-  "feeValidation": {
-    "status": "valid",
-    "message": "Payment matches the required fee"
-  },
-  "date": "2026-03-24T10:00:00Z"
-}
+### Payment Plans
+
+```
+POST   /api/payment-plans              Create installment plan
+GET    /api/payment-plans/:studentId   Get plan for student
+PUT    /api/payment-plans/:id          Update plan
 ```
 
-**Fee Validation Statuses:**
-- `valid`: Payment exactly matches the required fee
-- `overpaid`: Payment exceeds the required fee (still accepted)
-- `underpaid`: Payment is less than required (not accepted)
-- `unknown`: Student not found or memo missing
+### Disputes
 
-#### Sync Payments from Blockchain
-```bash
-POST /api/payments/sync
+```
+POST   /api/disputes           Open a dispute
+GET    /api/disputes           List disputes
+PUT    /api/disputes/:id       Update dispute status
 ```
 
-Fetches the 20 most recent transactions to the school wallet, matches memos to students, validates amounts, and records new payments.
+### Reports
 
-Response `200`:
-```json
-{
-  "message": "Sync complete"
-}
+```
+GET    /api/reports            Generate payment report (date range, CSV or JSON)
 ```
 
-#### Get Payment History for a Student
-```bash
-GET /api/payments/STU001
+### Receipts
+
+```
+GET    /api/receipts/:txHash   Download payment receipt
 ```
 
-Response `200`:
-```json
-[
-  {
-    "txHash": "abc123...",
-    "amount": 250,
-    "feeAmount": 250,
-    "feeValidationStatus": "valid",
-    "memo": "STU001",
-    "confirmedAt": "2026-03-24T10:00:00Z"
-  }
-]
+### Audit Logs
+
+```
+GET    /api/audit              Paginated audit log with date/actor filters
 ```
 
-#### Get Accepted Assets
-```bash
-GET /api/payments/accepted-assets
+### Reminders
+
+```
+POST   /api/reminders/send     Trigger payment reminder emails
+GET    /api/reminders          List reminder history
 ```
 
-Response `200`:
-```json
-[
-  {
-    "code": "XLM",
-    "type": "native",
-    "displayName": "Stellar Lumens"
-  },
-  {
-    "code": "USDC",
-    "type": "credit_alphanum4",
-    "displayName": "USD Coin"
-  }
-]
+### Admin
+
+```
+GET    /api/admin/retry-queue       Retry queue depth and status
+POST   /api/admin/log-level         Change log level at runtime
+GET    /api/consistency             Run data consistency check
 ```
 
-#### Get Payment Limits
-```bash
-GET /api/payments/limits
+### System
+
+```
+GET    /health                 Health check (ok / degraded / unhealthy)
+GET    /metrics                Prometheus metrics
+GET    /api/docs               Swagger UI (development only)
+GET    /api/docs.json          OpenAPI spec JSON
 ```
 
-Response `200`:
-```json
-{
-  "min": 0.01,
-  "max": 100000,
-  "message": "Payment amounts must be between 0.01 and 100000"
-}
-```
+### Error Response Format
 
-### Error Responses
-
-All errors follow a consistent format:
+All errors use a consistent shape:
 
 ```json
 {
-  "error": "Human-readable error message",
+  "error": "Human-readable description",
   "code": "ERROR_CODE"
 }
 ```
 
-**Common Error Codes:**
-- `NOT_FOUND`: Resource not found (404)
-- `VALIDATION_ERROR`: Invalid request data (400)
-- `DUPLICATE_TX`: Transaction already recorded (409)
-- `TX_FAILED`: Transaction failed on Stellar network (400)
-- `MISSING_MEMO`: Transaction missing required memo field (400)
-- `INVALID_DESTINATION`: Transaction sent to wrong wallet (400)
-- `UNSUPPORTED_ASSET`: Payment made in unsupported asset (400)
-- `AMOUNT_TOO_LOW`: Payment below minimum limit (400)
-- `AMOUNT_TOO_HIGH`: Payment exceeds maximum limit (400)
-- `STELLAR_NETWORK_ERROR`: Stellar Horizon API unavailable (502)
+Common error codes: `NOT_FOUND`, `VALIDATION_ERROR`, `DUPLICATE_TX`, `TX_FAILED`, `MISSING_MEMO`, `INVALID_DESTINATION`, `UNSUPPORTED_ASSET`, `AMOUNT_TOO_LOW`, `AMOUNT_TOO_HIGH`, `STELLAR_NETWORK_ERROR`, `STUDENT_QUOTA_EXCEEDED`, `ASSET_NOT_ACCEPTED`, `UNAUTHORIZED`, `FORBIDDEN`.
 
 ---
 
-## 🧪 Testing
+## Security
 
-StellarEduPay includes comprehensive test coverage for all core functionality.
+- **JWT + HttpOnly cookies**: Access tokens are short-lived; refresh tokens stored in HttpOnly cookies to prevent XSS theft.
+- **TOTP MFA**: Optional per-admin TOTP second factor.
+- **Step-up authentication**: Sensitive operations require re-authentication regardless of session state.
+- **Helmet**: Strict CSP (`default-src 'none'`), `X-Frame-Options`, and other security headers.
+- **CORS**: Configurable allow-list via `ALLOWED_ORIGINS`.
+- **Rate limiting**: Per-IP rate limiting with Redis persistence; dedicated stricter limit on `/api/payments/verify`.
+- **Request queue + circuit breaker**: Protects downstream services from overload.
+- **Webhook HMAC signatures**: Outbound webhooks are signed with `HMAC-SHA256` so receivers can verify authenticity.
+- **Memo encryption**: Student IDs in memos can be encrypted at rest with AES-256.
+- **No private key storage**: The backend never holds the school's Stellar secret key.
+- **Proxy trust**: Configurable `TRUSTED_PROXY_HOPS` prevents IP spoofing via `X-Forwarded-For`.
+- **Body size limit**: Configurable `MAX_BODY_SIZE` to prevent request flood attacks.
 
-### Run All Tests
+See [`docs/security.md`](docs/security.md) for a full threat model.
+
+---
+
+## Testing
 
 Tests mock both the Stellar SDK and MongoDB — no real network or database required.
 
 ```bash
-# From the project root — install root dependencies first if you haven't already
-npm install
-
+# All tests (from project root)
 npm test
-```
 
-Expected output:
+# Backend tests only
+cd backend && npm test
 
-```
-PASS tests/stellar.test.js
-PASS tests/payment.test.js
-PASS tests/payment-limits.test.js
-
-Test Suites: 3 passed, 3 total
-Tests:       45 passed, 45 total
-Snapshots:   0 total
-Time:        5.234s
-```
-
-### Test Files
-
-| Test File | Coverage |
-|-----------|----------|
-| [`tests/stellar.test.js`](tests/stellar.test.js) | Stellar service: asset detection, fee validation, amount normalization, transaction verification, ledger sync |
-| [`tests/payment.test.js`](tests/payment.test.js) | Payment API: full payment flow, all endpoints, edge cases, error handling |
-| [`tests/payment-limits.test.js`](tests/payment-limits.test.js) | Payment limits: validation, boundary cases, error codes |
-
-### Run Specific Tests
-
-```bash
-# Test Stellar service only
+# Specific test file
 npm test tests/stellar.test.js
 
-# Test payment API only
-npm test tests/payment.test.js
+# Integration tests (requires live Stellar testnet)
+npm run test:integration
 
-# Test payment limits only
-npm test tests/payment-limits.test.js
+# Docker Compose health check tests
+npm run test:docker-healthcheck
 ```
 
-### Test Coverage
-
-All tests use mocks for:
-- **Stellar SDK**: No real blockchain network calls
-- **MongoDB**: In-memory database for isolation
-- **HTTP requests**: Supertest for API testing
-
-This ensures tests run quickly and don't require external dependencies.
+The test suite covers: Stellar service, payment API, payment limits, authentication, MFA, JWT refresh, disputes, fee adjustments, audit logs, webhooks, idempotency, concurrent processing, rate limiting, graceful shutdown, multi-asset support, currency conversion, source validation rules, SSE, and more.
 
 ---
 
-## 📁 Project Structure
+## Monitoring & Observability
+
+### Health Check
 
 ```
-StellarEduPay/
-├── backend/                          # Backend Node.js application
-│   ├── src/
-│   │   ├── app.js                    # Express server setup
-│   │   ├── config/
-│   │   │   ├── index.js              # Environment configuration
-│   │   │   └── stellarConfig.js      # Stellar network configuration
-│   │   ├── controllers/
-│   │   │   ├── feeController.js      # Fee structure endpoints
-│   │   │   ├── paymentController.js  # Payment endpoints
-│   │   │   ├── reportController.js   # Report generation
-│   │   │   └── studentController.js  # Student CRUD endpoints
-│   │   ├── middleware/
-│   │   │   └── validate.js           # Request validation middleware
-│   │   ├── models/
-│   │   │   ├── feeStructureModel.js  # Fee structure schema
-│   │   │   ├── paymentModel.js       # Payment schema
-│   │   │   ├── paymentIntentModel.js # Payment intent schema
-│   │   │   ├── pendingVerificationModel.js # Retry queue schema
-│   │   │   └── studentModel.js       # Student schema
-│   │   ├── routes/
-│   │   │   ├── feeRoutes.js          # Fee structure routes
-│   │   │   ├── paymentRoutes.js      # Payment routes
-│   │   │   ├── reportRoutes.js       # Report routes
-│   │   │   └── studentRoutes.js      # Student routes
-│   │   ├── services/
-│   │   │   ├── reportService.js      # Report generation logic
-│   │   │   ├── retryService.js       # Automatic retry mechanism
-│   │   │   ├── stellarService.js     # Stellar blockchain integration
-│   │   │   └── transactionService.js # Background polling
-│   │   └── utils/
-│   │       └── paymentLimits.js      # Payment limit validation
-│   ├── .env.example                  # Example environment variables
-│   └── package.json                  # Backend dependencies
-│
-├── frontend/                         # Next.js frontend application
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Navbar.jsx            # Navigation component
-│   │   │   ├── PaymentForm.jsx       # Payment form component
-│   │   │   ├── ReportDownload.jsx    # Report download component
-│   │   │   └── TransactionCard.jsx   # Transaction display component
-│   │   ├── pages/
-│   │   │   ├── index.jsx             # Home page
-│   │   │   ├── dashboard.jsx         # Student dashboard
-│   │   │   ├── pay-fees.jsx          # Payment page
-│   │   │   └── reports.jsx           # Reports page
-│   │   ├── services/
-│   │   │   └── api.js                # API client
-│   │   └── styles/
-│   │       └── globals.css           # Global styles
-│   ├── .env.example                  # Example environment variables
-│   └── package.json                  # Frontend dependencies
-│
-├── docs/                             # Documentation
-│   ├── api-spec.md                   # Full API reference
-│   ├── architecture.md               # System architecture
-│   ├── payment-limits.md             # Payment limits documentation
-│   └── stellar-integration.md        # Stellar integration details
-│
-├── scripts/
-│   └── create-school-wallet.js       # Wallet generation script
-│
-├── tests/                            # Test suite
-│   ├── payment.test.js               # Payment API tests
-│   ├── payment-limits.test.js        # Payment limits tests
-│   └── stellar.test.js               # Stellar service tests
-│
-├── .gitignore                        # Git ignore rules
-├── CONTRIBUTING.md                   # Contribution guidelines
-├── docker-compose.yml                # Docker Compose configuration
-├── package.json                      # Root package.json for tests
-└── README.md                         # This file
+GET /health
 ```
 
----
+| Response | Meaning |
+|----------|---------|
+| `200 { "status": "ok" }` | All systems healthy |
+| `200 { "status": "degraded", "details": {...} }` | App is up but a subsystem (e.g. Horizon) is unreachable |
+| `503 { "status": "unhealthy" }` | MongoDB disconnected or a critical worker crashed |
 
-## 📚 Documentation
+### Prometheus + Grafana
 
-Comprehensive documentation is available in the [`docs/`](docs/) directory:
+Start the monitoring stack:
 
-| Document | Description |
-|----------|-------------|
-| [`docs/architecture.md`](docs/architecture.md) | System design, component overview, data flow diagrams |
-| [`docs/api-spec.md`](docs/api-spec.md) | Complete API reference with request/response examples |
-| [`docs/stellar-integration.md`](docs/stellar-integration.md) | Stellar-specific details: memo field, assets, testnet setup |
-| [`docs/payment-limits.md`](docs/payment-limits.md) | Payment limits feature: configuration, security, troubleshooting |
+```bash
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up
+```
 
----
-
-## 📊 Monitoring & Observability
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3001` (datasource pre-provisioned)
+- Metrics endpoint: `http://localhost:5000/metrics`
 
 ### Log Format
 
-The backend emits **JSON-structured logs** to stdout. Each log line is a single JSON object:
+Structured JSON to stdout:
 
 ```json
 {
@@ -1056,151 +695,225 @@ The backend emits **JSON-structured logs** to stdout. Each log line is a single 
 }
 ```
 
-Aggregate logs with any standard tool (CloudWatch Logs, Datadog, Loki, ELK). Filter by `level: "error"` for alerting.
+### Logging Configuration
 
-### Health Check Endpoint
+#### Log Levels
 
+The application supports four log levels (from least to most verbose):
+
+| Level | Use Case |
+|-------|----------|
+| `error` | Production: only errors. Minimal overhead, best for high-volume services. |
+| `warn` | Warnings and errors. Good for production health monitoring. |
+| `info` | **Development default.** Info + warnings + errors. Readable without spam. |
+| `debug` | All events including low-level operations. Use only for troubleshooting. |
+
+#### Setting Log Level
+
+**Via environment variable (startup):**
+```bash
+LOG_LEVEL=debug npm start        # Set at startup
+LOG_LEVEL=warn npm start         # Production mode
 ```
-GET /health
+
+Default is `info`.
+
+**At runtime (no restart needed):**
+```bash
+# Change log level via admin API
+curl -X POST http://localhost:5000/api/admin/log-level \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"level": "debug"}'
+
+# Response
+{ "previous": "info", "current": "debug" }
 ```
 
-| Response | Meaning |
-|----------|---------|
-| `200 { "status": "ok" }` | All systems healthy — MongoDB connected, background workers running |
-| `200 { "status": "degraded", "details": {...} }` | App is up but a subsystem (e.g. Stellar Horizon) is unreachable; payments may be delayed |
-| `503 { "status": "unhealthy" }` | MongoDB disconnected or a critical worker has crashed; the app cannot process payments |
+Verify current level at any time:
+```bash
+curl http://localhost:5000/health | jq .logLevel
+```
 
-Use the health endpoint as the target for load-balancer health checks and uptime monitors (e.g. UptimeRobot, AWS Route 53 health checks).
+#### Suppressing Third-Party Noise
 
-### Key Metrics to Monitor
+In development (`NODE_ENV != production`), the backend automatically suppresses verbose logging from:
+- **ioredis** — Redis connection/reconnection spam
+- **mongoose** — Schema validation debug info
 
-| Metric | Description | How to Observe |
-|--------|-------------|----------------|
-| **Sync lag** | Time since the last successful blockchain sync | Log field `lastSyncAt`; alert if `now - lastSyncAt > 5 min` |
-| **Retry queue depth** | Number of payments awaiting re-verification | Query `db.pendingverifications.countDocuments()` or expose via `/api/payments/retry-queue` |
-| **Payment processing time** | Latency from transaction confirmed on Stellar to status updated in DB | Log field `processingMs` on each sync event |
-| **Error rate** | Count of `level: "error"` log lines per minute | Log aggregation filter |
-| **Underpaid / suspicious payments** | Payments flagged `feeValidationStatus: "underpaid"` or `isSuspicious: true` | MongoDB query or log filter |
+This keeps the console output clean at the default `info` level. To see low-level details:
+```bash
+LOG_LEVEL=debug npm run dev
+```
+
+#### File Logging
+
+Application logs are also written to disk with daily rotation:
+- **Combined:** `logs/combined-YYYY-MM-DD.log` (all levels)
+- **Errors only:** `logs/error-YYYY-MM-DD.log` (errors only)
+
+Configuration via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_MAX_SIZE` | `100m` | Size before file rotation |
+| `LOG_MAX_FILES` | `14d` | Keep this many rotated files |
+
+Examples:
+```bash
+# Keep larger files
+LOG_MAX_SIZE=500m npm start
+
+# Shorter retention
+LOG_MAX_FILES=7d npm start
+```
 
 ### Recommended Alerting Thresholds
 
-| Alert | Threshold | Severity |
-|-------|-----------|----------|
-| Sync lag | `lastSyncAt` older than **5 minutes** | Warning |
-| Sync lag | `lastSyncAt` older than **15 minutes** | Critical |
-| Retry queue depth | > **50** pending verifications | Warning |
-| Retry queue depth | > **200** pending verifications | Critical |
-| Payment processing time (p95) | > **10 seconds** | Warning |
-| Health check | Returns `503` for **2 consecutive checks** | Critical |
-| Error log rate | > **10 errors/minute** | Warning |
+| Alert | Warning | Critical |
+|-------|---------|----------|
+| Sync lag (`lastSyncAt` age) | 5 min | 15 min |
+| Retry queue depth | > 50 | > 200 |
+| Payment processing time (p95) | > 10s | — |
+| Health check returning 503 | — | 2 consecutive |
+| Error log rate | > 10/min | — |
 
-### Docker Compose Logs
+---
+
+## Database Migrations
+
+Migrations live in `backend/migrations/` and are tracked in a `migrations` collection.
 
 ```bash
-# Stream all service logs
-docker compose logs -f
+node scripts/migrate.js
+```
 
-# Backend only
-docker compose logs -f backend
+Migrations are idempotent — safe to run repeatedly. The runner skips already-applied migrations.
 
-# Filter for errors
-docker compose logs backend | grep '"level":"error"'
+Current migrations include: audit log TTL index, student indexes, idempotency key TTL, payment intent TTL, report indexes, pending verification indexes, memo encryption backfill, student soft-delete backfill, school slug uniqueness, webhook secret seeding, and audit log compound index.
+
+---
+
+## Backup & Recovery
+
+The Docker Compose `backup` service runs `mongodump` every 24 hours and retains 7 days of archives.
+
+```bash
+# Manual backup
+./scripts/backup.sh
+
+# Restore from archive
+./scripts/restore.sh backups/20260324T120000Z.gz
+```
+
+Configuration:
+
+```bash
+export BACKUP_DIR=./backups   # host path for backup archives
+export RETAIN_DAYS=7          # days of backups to keep
 ```
 
 ---
 
-## 🤝 Contributing
+## Project Structure
 
-We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING.md) for details on:
+```
+StellarEduPay/
+├── backend/
+│   ├── migrations/            # Numbered database migration scripts
+│   ├── src/
+│   │   ├── app.js             # Express server, middleware, startup
+│   │   ├── config/            # Environment config, Stellar config, Swagger, DB
+│   │   ├── controllers/       # Route handlers
+│   │   ├── events/            # Node.js EventEmitter (paymentSaved)
+│   │   ├── middleware/        # Auth, rate limiting, validation, request logger
+│   │   ├── metrics/           # Prometheus counters and gauges
+│   │   ├── models/            # Mongoose schemas
+│   │   ├── queue/             # BullMQ transaction queue
+│   │   ├── routes/            # Express routers
+│   │   ├── services/          # Business logic, Stellar, webhooks, polling
+│   │   ├── templates/         # Email HTML/text templates
+│   │   └── utils/             # Helpers: logger, crypto, validation
+│   ├── tests/                 # Backend-scoped unit tests
+│   ├── Dockerfile
+│   ├── .env.example
+│   └── package.json
+│
+├── frontend/
+│   ├── src/
+│   │   ├── components/        # React components
+│   │   ├── hooks/             # Custom React hooks
+│   │   ├── pages/             # Next.js pages
+│   │   ├── services/          # API client, currency service
+│   │   ├── styles/            # Global CSS
+│   │   └── utils/             # Frontend helpers
+│   ├── public/
+│   ├── Dockerfile
+│   └── package.json
+│
+├── docs/                      # Architecture, API spec, integration guides
+├── monitoring/                # Prometheus config, Grafana provisioning
+├── scripts/                   # Wallet generation, seed, migrations, backup
+├── tests/                     # Root-level integration & e2e tests
+├── deploy/k8s/                # Kubernetes deployment sample
+├── docker-compose.yml
+├── docker-compose.monitoring.yml
+└── package.json               # Root: runs tests across all packages
+```
 
-- Code of conduct
-- Development workflow
-- Pull request process
-- Coding standards
+---
 
-> **CI requirement**: All pull requests must pass the CI workflow before merging. The CI runs the full test suite on every push and pull request targeting `main`.
+## Documentation
 
-### Quick Start for Contributors
+| Document | Description |
+|----------|-------------|
+| [`docs/architecture.md`](docs/architecture.md) | System design and data flow |
+| [`docs/api-spec.md`](docs/api-spec.md) | Full API reference |
+| [`docs/stellar-integration.md`](docs/stellar-integration.md) | Stellar-specific details |
+| [`docs/payment-limits.md`](docs/payment-limits.md) | Payment limits configuration |
+| [`docs/security.md`](docs/security.md) | Security model and threat analysis |
+| [`docs/WEBHOOK_INTEGRATION.md`](docs/WEBHOOK_INTEGRATION.md) | Webhook setup and HMAC verification |
+| [`docs/idempotency-payment-verification.md`](docs/idempotency-payment-verification.md) | Idempotency key design |
+| [`docs/QUICK_START_DOCKER.md`](docs/QUICK_START_DOCKER.md) | Docker quick start |
+
+---
+
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md) for a complete history of changes, breaking changes, and migration guides.
+
+---
+
+## Troubleshooting
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `tx_insufficient_balance` | Testnet account has 0 XLM | Fund via [Friendbot](https://laboratory.stellar.org/#account-creator?network=test) |
+| `op_no_trust` | Recipient has no trustline for the asset | Submit a `ChangeTrust` op from the recipient account |
+| `connection refused` (MongoDB) | DB container not ready or wrong URI | Check `docker ps`; ensure `MONGO_URI` includes `?replicaSet=rs0` |
+| `tx_bad_auth` | Secret key doesn't match public address | Verify the keypair in `.env` |
+| Rate-limit counters reset on restart | `REDIS_HOST` not set | Configure Redis for persistent counters |
+| Swagger UI missing in production | Expected — intentional | Set `NODE_ENV` to anything other than `production`, or use `/api/docs.json` |
+
+---
+
+## Contributing
 
 1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes and add tests
-4. Run tests: `npm test`
-5. Commit your changes: `git commit -m 'Add amazing feature'`
-6. Push to the branch: `git push origin feature/amazing-feature`
-7. Open a Pull Request
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Add tests for new behaviour
+4. Run the full test suite: `npm test`
+5. Add a `[Unreleased]` entry to `CHANGELOG.md`
+6. Open a pull request — CI must pass before merging
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full contribution guide, coding standards, and PR process.
 
 ---
 
-## 🔮 Future Enhancements
+## License
 
-- **Multi-School Support**: Isolated wallets and records per institution
-- **Email/SMS Notifications**: Alert parents when payments are confirmed
-- **Scholarship Disbursement**: Outbound XLM payments to student wallets
-- **Hostel & Exam Fees**: Separate fee categories per student
-- **Donation Tracking**: Transparent fund collection for school projects
-- **Mobile App**: Native iOS/Android applications
-- **Admin Dashboard**: Enhanced analytics and reporting
-- **Recurring Payments**: Automatic payment scheduling
-- **Multi-Currency Support**: Additional stablecoins (EURC, etc.)
+MIT — see [LICENSE](LICENSE).
 
 ---
 
-## 📄 License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
----
-
-## 🆘 Support
-
-If you encounter any issues or have questions:
-
-1. Check the [Documentation](docs/)
-2. Search [existing issues](https://github.com/yourusername/StellarEduPay/issues)
-3. Open a [new issue](https://github.com/yourusername/StellarEduPay/issues/new) with:
-   - Clear description of the problem
-   - Steps to reproduce
-   - Expected vs actual behavior
-   - Environment details (OS, Node version, etc.)
-
----
-
-## 🙏 Acknowledgments
-
-- [Stellar Development Foundation](https://stellar.org) for the blockchain infrastructure
-- [MongoDB](https://www.mongodb.com) for the database platform
-- [Next.js](https://nextjs.org) for the frontend framework
-- All contributors who help improve this project
-
----
-
-## 🌐 Useful Links
-
-- **Stellar Network**: https://stellar.org
-- **Stellar Laboratory**: https://laboratory.stellar.org
-- **Stellar Horizon API**: https://developers.stellar.org/api
-- **Stellar Explorer (Testnet)**: https://stellar.expert/explorer/testnet
-- **Stellar Explorer (Mainnet)**: https://stellar.expert/explorer/public
-- **MongoDB Atlas**: https://www.mongodb.com/atlas
-
----
-## 🛠 Troubleshooting & Pitfalls
-
-If you encounter issues during setup, check the table below for common Stellar-specific errors and their solutions.
-
-| Error | Likely Cause | Solution |
-| :--- | :--- | :--- |
-| `tx_insufficient_balance` | The Stellar account in your `.env` has 0 XLM. | Go to the [Stellar Laboratory](https://laboratory.stellar.org/#account-creator?network=testnet) and use **Friendbot** to fund your Secret Key. |
-| `op_no_trust` | The recipient hasn't established a trustline for your custom asset. | Ensure the `ChangeTrust` operation is submitted by the student/user account before attempting to send tokens. |
-| `connection refused` | The MongoDB container is down or the URI is incorrect. | Run `docker ps` to ensure the `mongo` container is healthy. If running the backend natively, ensure `MONGO_URI` points to `localhost:27017`. |
-| `tx_bad_auth` | The `STELLAR_SECRET_KEY` does not match the public address being used. | Double-check your `.env` file to ensure the Secret Key corresponds to the correct Public Key. |
-
-### 🔍 Viewing Logs
-If the containers are running but the API isn't responding, check the real-time logs:
-```bash
-docker-compose logs -f backend
-
----
-
-**Built with ❤️ using Stellar blockchain technology**
+**Built with Stellar blockchain technology**

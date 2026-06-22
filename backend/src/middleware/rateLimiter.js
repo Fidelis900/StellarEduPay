@@ -2,51 +2,13 @@
 
 const rateLimit = require('express-rate-limit');
 
-// General limiter — applied globally to all routes
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later.', code: 'RATE_LIMIT_EXCEEDED' },
-});
+const RL_MSG = { error: 'Too many requests, please try again later.', code: 'RATE_LIMIT_EXCEEDED' };
+const rl = (windowMs, max, message = RL_MSG) => rateLimit({ windowMs, max, standardHeaders: true, legacyHeaders: false, message });
 
-// Strict limiter — for sensitive POST endpoints (sync, verify)
-const strictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests to this endpoint, please try again later.', code: 'RATE_LIMIT_EXCEEDED' },
-});
+const generalLimiter       = rl(15 * 60 * 1000, 100);
+const strictLimiter        = rl(15 * 60 * 1000, 10);
+const verifyLimiter        = rl(60 * 1000, parseInt(process.env.VERIFY_RATE_LIMIT || '10', 10));
+const reminderTriggerLimiter = rl(60 * 60 * 1000, 5, { error: 'Too many reminder requests. Please wait.', code: 'RATE_LIMIT_EXCEEDED' });
+const bulkImportLimiter    = rl(60 * 60 * 1000, 5, { error: 'Maximum 5 bulk imports per hour.', code: 'RATE_LIMIT_EXCEEDED' });
 
-// Verify limiter — dedicated limiter for POST /api/payments/verify
-// Defaults to 10 req/min; configurable via VERIFY_RATE_LIMIT env var.
-const verifyLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: parseInt(process.env.VERIFY_RATE_LIMIT || '10', 10),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many verify requests, please try again later.', code: 'RATE_LIMIT_EXCEEDED' },
-});
-
-// Reminder trigger limiter — prevents spamming students with reminder emails
-const reminderTriggerLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many reminder trigger requests. Please wait before sending more reminders.', code: 'RATE_LIMIT_EXCEEDED' },
-});
-
-// Bulk import limiter — dedicated limiter for POST /api/students/bulk
-// Maximum 5 requests per hour per IP to prevent DoS via large CSV uploads
-const bulkImportLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many bulk import requests. Maximum 5 per hour allowed.', code: 'RATE_LIMIT_EXCEEDED' },
-});
-
-module.exports = { generalLimiter, strictLimiter, reminderTriggerLimiter, verifyLimiter, bulkImportLimiter };
+module.exports = { generalLimiter, strictLimiter, verifyLimiter, reminderTriggerLimiter, bulkImportLimiter };

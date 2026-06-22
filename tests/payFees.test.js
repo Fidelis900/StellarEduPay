@@ -323,6 +323,30 @@ describe('pay-fees page source assertions (acceptance criteria)', () => {
     expect(formSrc).toMatch(/stellarUri/);
   });
 
+  test('PaymentForm has Copy payment URI button', () => {
+    expect(formSrc).toMatch(/Copy payment URI/);
+    expect(formSrc).toMatch(/paymentUri/);
+  });
+
+  test('PaymentForm has Download QR button', () => {
+    expect(formSrc).toMatch(/Download QR/);
+    expect(formSrc).toMatch(/downloadQr/);
+  });
+
+  test('PaymentForm copy URI button shows feedback on copy', () => {
+    expect(formSrc).toMatch(/qr-uri/);
+    expect(formSrc).toMatch(/Copied!/);
+  });
+
+  test('PaymentForm download uses PNG format', () => {
+    expect(formSrc).toMatch(/image\/png/);
+    expect(formSrc).toMatch(/\.png/);
+  });
+
+  test('PaymentForm QR wrapper has ref for download', () => {
+    expect(formSrc).toMatch(/qrWrapperRef/);
+  });
+
   test('PaymentForm shows payment history', () => {
     expect(formSrc).toMatch(/Payment History/);
     expect(formSrc).toMatch(/payments\.map/);

@@ -45,7 +45,7 @@ export default function AuditLog({ limit = 10 }) {
     return (
       <div style={containerStyle}>
         <h2 style={titleStyle}>Recent Admin Actions</h2>
-        <p style={{ color: "#888", fontSize: "0.9rem" }}>Loading...</p>
+        <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>Loading...</p>
       </div>
     );
   }
@@ -54,7 +54,7 @@ export default function AuditLog({ limit = 10 }) {
     return (
       <div style={containerStyle}>
         <h2 style={titleStyle}>Recent Admin Actions</h2>
-        <p style={{ color: "#c62828", fontSize: "0.9rem" }}>{error}</p>
+        <p style={{ color: "var(--error-color)", fontSize: "0.9rem" }}>{error}</p>
       </div>
     );
   }
@@ -63,7 +63,7 @@ export default function AuditLog({ limit = 10 }) {
     return (
       <div style={containerStyle}>
         <h2 style={titleStyle}>Recent Admin Actions</h2>
-        <p style={{ color: "#888", fontSize: "0.9rem" }}>No audit logs yet</p>
+        <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>No audit logs yet</p>
       </div>
     );
   }
@@ -96,8 +96,8 @@ export default function AuditLog({ limit = 10 }) {
                   <span
                     style={{
                       ...resultBadgeStyle,
-                      background: log.result === "success" ? "#e8f5e9" : "#ffebee",
-                      color: log.result === "success" ? "#2e7d32" : "#c62828",
+                      background: log.result === "success" ? "var(--success-bg)" : "var(--error-bg)",
+                      color: log.result === "success" ? "var(--success-color)" : "var(--error-color)",
                     }}
                   >
                     {log.result}
@@ -114,8 +114,8 @@ export default function AuditLog({ limit = 10 }) {
 }
 
 const containerStyle = {
-  background: "#fff",
-  border: "1px solid #e0e0e0",
+  background: "var(--card-bg)",
+  border: "1px solid var(--border)",
   borderRadius: 10,
   padding: "1.5rem",
   marginTop: "2rem",
@@ -125,7 +125,7 @@ const titleStyle = {
   fontSize: "1.25rem",
   fontWeight: 600,
   marginBottom: "1rem",
-  color: "#1a1a1a",
+  color: "var(--text)",
 };
 
 const tableContainerStyle = {
@@ -141,8 +141,8 @@ const tableStyle = {
 const thStyle = {
   textAlign: "left",
   padding: "0.75rem",
-  borderBottom: "2px solid #e0e0e0",
-  color: "#666",
+  borderBottom: "2px solid var(--border)",
+  color: "var(--muted)",
   fontWeight: 600,
   fontSize: "0.85rem",
   textTransform: "uppercase",
@@ -151,8 +151,8 @@ const thStyle = {
 
 const tdStyle = {
   padding: "0.75rem",
-  borderBottom: "1px solid #f0f0f0",
-  color: "#333",
+  borderBottom: "1px solid var(--border)",
+  color: "var(--text)",
 };
 
 const trStyle = {
@@ -162,8 +162,8 @@ const trStyle = {
 const targetBadgeStyle = {
   display: "inline-block",
   padding: "0.2rem 0.5rem",
-  background: "#e3f2fd",
-  color: "#1565c0",
+  background: "rgba(126,200,227,0.15)",
+  color: "var(--accent)",
   borderRadius: 4,
   fontSize: "0.75rem",
   fontWeight: 600,

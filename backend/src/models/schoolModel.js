@@ -32,6 +32,21 @@ const schoolSchema = new mongoose.Schema(
     adminEmail:     { type: String, default: null },
     address:        { type: String, default: null },
     /**
+     * Contact email for the school. Used for reminder emails, receipts, and admin notifications.
+     * Must be a valid email format.
+     */
+    contactEmail:   {
+      type: String,
+      default: null,
+      validate: {
+        validator: function(v) {
+          if (!v) return true; // Allow null/empty
+          return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+        },
+        message: 'Invalid email address format',
+      },
+    },
+    /**
      * Preferred local currency for fee display (ISO 4217 code, uppercase).
      * Used by the currency conversion layer to show fiat equivalents.
      * e.g. "USD" for US schools, "PGK" for Papua New Guinea, "NGN" for Nigeria.
@@ -69,11 +84,46 @@ const schoolSchema = new mongoose.Schema(
       min: [1.1, 'suspiciousPaymentMultiplier must be at least 1.1'],
       max: [100, 'suspiciousPaymentMultiplier must not exceed 100'],
     },
+    /**
+     * Maximum payment multiplier for this school.
+     * The maximum allowed payment is feeAmount * maxPaymentMultiplier.
+     * Allows each school to define what constitutes a suspicious overpayment.
+     * Default: 3.0 (allows payments up to 3× the fee).
+     * Min: 1.1 (must allow at least 10% overpayment).
+     * Max: 100 (prevents unreasonably high limits).
+     */
+    maxPaymentMultiplier: {
+      type: Number,
+      default: 3.0,
+      min: [1.1, 'maxPaymentMultiplier must be at least 1.1'],
+      max: [100, 'maxPaymentMultiplier must not exceed 100'],
+    },
+    /**
+     * Maximum number of students this school can register.
+     * Enforces per-school student quotas for subscription tiers.
+     * Default: 10000 (effectively unlimited for most schools).
+     * Set to a lower value to enforce tier-based limits.
+     */
+    maxStudents: {
+      type: Number,
+      default: 10000,
+      min: [1, 'maxStudents must be at least 1'],
+    },
   },
   { timestamps: true }
 );
 
 schoolSchema.index({ slug: 1 }, { unique: true });
 schoolSchema.index({ slug: 1, isActive: 1 });
+
+// toJSON transform to exclude sensitive fields
+schoolSchema.set('toJSON', {
+  transform: (doc, ret) => {
+    delete ret.jwtSecret;
+    delete ret.webhookSecret;
+    delete ret.internalNotes;
+    return ret;
+  },
+});
 
 module.exports = mongoose.model('School', schoolSchema);

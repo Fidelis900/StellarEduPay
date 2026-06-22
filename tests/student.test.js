@@ -3,6 +3,7 @@
 // Must set required env vars before app is loaded
 process.env.MONGO_URI = 'mongodb://localhost:27017/test';
 process.env.SCHOOL_WALLET_ADDRESS = 'GCICZOP346CKADPWOZ6JAQ7OCGH44UELNS3GSDXFOTSZRW6OYZZ6KSY7B';
+process.env.JWT_SECRET = 'test-jwt-secret-for-student-controller-suite';
 
 const request = require('supertest');
 
@@ -31,10 +32,26 @@ jest.mock('../backend/src/models/studentModel', () => {
   chainable.skip.mockReturnValue(chainable);
   chainable.limit.mockResolvedValue(mockStudents);
   
+  // findOne must support both `await findOne()` and `findOne().includeDeleted()`.
+  // We wrap the mock so every return value gets an `includeDeleted` method attached,
+  // while preserving normal mockResolvedValueOnce / mockImplementationOnce behaviour.
+  const findOneMock = jest.fn();
+  const _findOneImpl = (val) => {
+    const p = Promise.resolve(val);
+    p.includeDeleted = () => Promise.resolve(null);
+    p.lean = () => Promise.resolve(val);
+    return p;
+  };
+  findOneMock.mockImplementation(() => _findOneImpl(null));
+  // Patch mockResolvedValueOnce so it also attaches includeDeleted
+  const _origMRVO = findOneMock.mockResolvedValueOnce.bind(findOneMock);
+  findOneMock.mockResolvedValueOnce = function (val) {
+    return findOneMock.mockImplementationOnce(() => _findOneImpl(val));
+  };
   return {
     create: jest.fn(),
     find: jest.fn().mockReturnValue(chainable),
-    findOne: jest.fn(),
+    findOne: findOneMock,
     findOneAndUpdate: jest.fn(),
     findOneAndDelete: jest.fn(),
     countDocuments: jest.fn().mockResolvedValue(2),
@@ -279,7 +296,8 @@ describe('Student Controller', () => {
 
       expect(res.status).toBe(200);
       expect(Student.find).toHaveBeenCalledWith(
-        expect.objectContaining({ class: '5A' })
+        expect.objectContaining({ class: '5A' }),
+        expect.anything()
       );
     });
 
@@ -288,7 +306,8 @@ describe('Student Controller', () => {
 
       expect(res.status).toBe(200);
       expect(Student.find).toHaveBeenCalledWith(
-        expect.objectContaining({ feePaid: true })
+        expect.objectContaining({ feePaid: true }),
+        expect.anything()
       );
     });
 
@@ -297,7 +316,8 @@ describe('Student Controller', () => {
 
       expect(res.status).toBe(200);
       expect(Student.find).toHaveBeenCalledWith(
-        expect.objectContaining({ feePaid: false, totalPaid: { $lte: 0 } })
+        expect.objectContaining({ feePaid: false, totalPaid: { $lte: 0 } }),
+        expect.anything()
       );
     });
 
@@ -306,7 +326,8 @@ describe('Student Controller', () => {
 
       expect(res.status).toBe(200);
       expect(Student.find).toHaveBeenCalledWith(
-        expect.objectContaining({ feePaid: false, totalPaid: { $gt: 0 } })
+        expect.objectContaining({ feePaid: false, totalPaid: { $gt: 0 } }),
+        expect.anything()
       );
     });
 
@@ -339,6 +360,34 @@ describe('Student Controller', () => {
       expect(callArg).toMatchObject({ class: '5A', feePaid: true });
       expect(callArg).toHaveProperty('$or');
     });
+
+    // #607 — ReDoS: special regex characters must be escaped, not thrown as SyntaxError
+    test.each([
+      ['(', '\\('],
+      ['[', '\\['],
+      ['*', '\\*'],
+      ['.', '\\.'],
+      ['\\', '\\\\'],
+    ])('search=%s returns 200 and escapes the character to %s', async (char, escaped) => {
+      const res = await testApi.get(`/api/students?search=${encodeURIComponent(char)}`);
+      expect(res.status).toBe(200);
+      const callArg = Student.find.mock.calls[0][0];
+      const nameRegex = callArg.$or.find(c => c.name)?.name;
+      expect(nameRegex).toBeInstanceOf(RegExp);
+      expect(nameRegex.source).toContain(escaped);
+    });
+
+    test('search=( returns 200 with empty array, not 500', async () => {
+      Student.find.mockReturnValueOnce({
+        sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockResolvedValue([]),
+      });
+      Student.countDocuments.mockResolvedValueOnce(0);
+      const res = await testApi.get('/api/students?search=(');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('students');
+    });
   });
 
   describe('GET /api/students/:studentId - getStudent', () => {
@@ -365,8 +414,8 @@ describe('Student Controller', () => {
       const res = await testApi.get('/api/students/UNKNOWN999');
 
       expect(res.status).toBe(404);
-      expect(res.body).toHaveProperty('code', 'NOT_FOUND');
-      expect(res.body).toHaveProperty('error');
+      // error handler wraps as { error: { code, message }, success: false }
+      expect(res.body.error).toHaveProperty('code', 'NOT_FOUND');
     });
   });
 });

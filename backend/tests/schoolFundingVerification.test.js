@@ -1,5 +1,7 @@
 'use strict';
 
+process.env.ADMIN_PASSWORD = 'test-admin-password';
+
 /**
  * Integration tests for school creation and update with Stellar account funding verification.
  * Tests POST /api/schools and PATCH /api/schools/:slug with funded, unfunded, and network error scenarios.
@@ -45,7 +47,7 @@ const { verifyStellarAccountFunding } = require('../src/services/stellarAccountV
 
 function mockReq(body = {}, params = {}) {
   return {
-    body,
+    body: { confirmPassword: process.env.ADMIN_PASSWORD, ...body },
     params,
     headers: {},
     auditContext: {

@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import SyncButton from "../components/SyncButton";
 import ErrorBoundary from "../components/ErrorBoundary";
-import { getSyncStatus, getPaymentSummary, getStudents } from "../services/api";
+import StudentForm from "../components/StudentForm";
+import PageHero, { StatCard } from "../components/PageHero";
+import { getSyncStatus, getPaymentSummary, getStudents, getStudent } from "../services/api";
+import {
+  IconUsers, IconCheck, IconAlertTriangle, IconDollarSign,
+  IconSearch, IconChevronLeft, IconChevronRight,
+} from "../components/Icons";
 
 const PAGE_SIZE = 20;
 
@@ -15,30 +21,31 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-const STATUS_COLOR = {
-  paid:    { bg: "#dcfce7", color: "#166534" },
-  partial: { bg: "#fef9c3", color: "#854d0e" },
-  unpaid:  { bg: "#fee2e2", color: "#991b1b" },
+const STATUS_BADGE = {
+  paid:    { cls: "badge badge-success", label: "Paid" },
+  partial: { cls: "badge badge-warning", label: "Partial" },
+  unpaid:  { cls: "badge badge-danger",  label: "Unpaid" },
 };
 
 export default function Dashboard() {
-  const [lastSyncAt, setLastSyncAt]     = useState(null);
-  const [syncMsg, setSyncMsg]           = useState(null);
-  const [summary, setSummary]           = useState(null);
-  const [summaryLoading, setSummaryLoading] = useState(true);
-  const [summaryError, setSummaryError]     = useState(null);
-  const [students, setStudents]         = useState([]);
+  const [lastSyncAt, setLastSyncAt]           = useState(null);
+  const [syncMsg, setSyncMsg]                 = useState(null);
+  const [summary, setSummary]                 = useState(null);
+  const [summaryLoading, setSummaryLoading]   = useState(true);
+  const [summaryError, setSummaryError]       = useState(null);
+  const [students, setStudents]               = useState([]);
   const [studentsLoading, setStudentsLoading] = useState(true);
-  const [studentsError, setStudentsError]   = useState(null);
-  const [page, setPage]                 = useState(1);
-  const [pages, setPages]               = useState(1);
-  const [total, setTotal]               = useState(0);
-  const [search, setSearch]             = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [classFilter, setClassFilter]   = useState("");
-  const [error, setError]               = useState(null);
+  const [studentsError, setStudentsError]     = useState(null);
+  const [page, setPage]                       = useState(1);
+  const [pages, setPages]                     = useState(1);
+  const [total, setTotal]                     = useState(0);
+  const [search, setSearch]                   = useState("");
+  const [statusFilter, setStatusFilter]       = useState("all");
+  const [classFilter, setClassFilter]         = useState("");
+  const [error, setError]                     = useState(null);
+  const [editingStudent, setEditingStudent]   = useState(null);
+  const [editingStudentData, setEditingStudentData] = useState(null);
 
-  // Debounce search input so we don't fire a request on every keystroke.
   const searchDebounceRef = useRef(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -77,13 +84,11 @@ export default function Dashboard() {
     fetchSummary();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset to page 1 whenever any filter changes, then fetch.
   useEffect(() => {
     setPage(1);
     fetchStudents(1, debouncedSearch, statusFilter, classFilter);
   }, [debouncedSearch, statusFilter, classFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch when page changes (filter-change above already resets to p=1).
   useEffect(() => {
     fetchStudents(page, debouncedSearch, statusFilter, classFilter);
   }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -91,179 +96,283 @@ export default function Dashboard() {
   function handleSyncComplete(data) {
     setLastSyncAt(new Date().toISOString());
     setSyncMsg(data?.message || "Sync complete.");
-    setTimeout(() => setSyncMsg(null), 3000);
+    setTimeout(() => setSyncMsg(null), 3500);
     fetchSummary();
     setPage(1);
     fetchStudents(1, debouncedSearch, statusFilter, classFilter);
   }
 
+  async function handleEditStudent(student) {
+    try {
+      const { data } = await getStudent(student.studentId);
+      setEditingStudentData(data);
+      setEditingStudent(student.studentId);
+    } catch {
+      setError("Failed to load student details");
+    }
+  }
+
+  function handleCloseForm() {
+    setEditingStudent(null);
+    setEditingStudentData(null);
+  }
+
+  function handleSaveStudent() {
+    handleCloseForm();
+    fetchStudents(page, debouncedSearch, statusFilter, classFilter);
+  }
+
   const stats = [
-    { label: "Total Students",   value: summary?.totalStudents ?? summary?.total ?? "—" },
-    { label: "Paid",             value: summary?.paidCount    ?? summary?.counts?.paid    ?? "—", accent: "#166534" },
-    { label: "Pending",          value: (summary?.unpaidCount || 0) + (summary?.counts?.partial || 0) || "—", accent: "#854d0e" },
-    { label: "XLM Collected",    value: summary ? `${(summary.totalXlmCollected || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—", sub: "XLM", accent: "#1d4ed8" },
+    {
+      label: "Total Students",
+      value: summary?.totalStudents ?? summary?.total ?? "—",
+      Icon: IconUsers,
+      color: "cyan",
+    },
+    {
+      label: "Paid",
+      value: summary?.paidCount ?? summary?.counts?.paid ?? "—",
+      Icon: IconCheck,
+      color: "green",
+    },
+    {
+      label: "Pending",
+      value: summary ? ((summary.unpaidCount || 0) + (summary.counts?.partial || 0)) || "—" : "—",
+      Icon: IconAlertTriangle,
+      color: "amber",
+    },
+    {
+      label: "XLM Collected",
+      value: summary
+        ? (summary.totalXlmCollected || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })
+        : "—",
+      sub: "XLM total",
+      Icon: IconDollarSign,
+      color: "violet",
+    },
   ];
 
-  // Page-range display, e.g. "Showing 21–40 of 347 students"
   const rangeStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const rangeEnd   = Math.min(page * PAGE_SIZE, total);
 
   return (
     <>
       <style>{`
-        @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-        .dash-wrap { max-width: 1000px; margin: 0 auto; padding: 2rem 1rem; animation: fadeUp 0.4s ease both; }
-        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-        .stat-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem; }
-        .stat-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 0.5rem; }
-        .stat-value { font-size: 1.75rem; font-weight: 700; line-height: 1; }
-        .stat-sub   { font-size: 0.8rem; color: var(--muted); margin-top: 0.2rem; }
-        .dash-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-        .dash-table th { text-align: left; padding: 0.6rem 1rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
-        .dash-table td { padding: 0.85rem 1rem; border-bottom: 1px solid var(--border); }
-        .dash-table tbody tr:last-child td { border-bottom: none; }
-        .dash-table tbody tr:hover { background: rgba(126,200,227,0.06); }
-        .status-badge { display: inline-block; padding: 0.2rem 0.65rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; text-transform: capitalize; }
-        .toolbar { display: flex; gap: 0.75rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
-        .toolbar input, .toolbar select { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; background: var(--bg); color: var(--text); outline: none; }
-        .toolbar input { flex: 1; min-width: 180px; max-width: 320px; }
-        .toolbar input:focus, .toolbar select:focus { border-color: var(--accent); }
-        .page-btn { padding: 0.4rem 0.9rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; font-size: 0.85rem; }
-        .page-btn:disabled { opacity: 0.4; cursor: default; }
-        .skeleton { height: 1.4rem; width: 55%; background: var(--border); border-radius: 4px; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-        .table-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-        .pagination-bar { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-top: 1rem; font-size: 0.85rem; flex-wrap: wrap; }
-        .pagination-controls { display: flex; align-items: center; gap: 0.5rem; }
+        @keyframes dashFadeUp {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .dash-wrap { animation: dashFadeUp 0.35s ease both; }
+        .dash-stat-row { --stat-accent: var(--c); }
+
+        /* Inline toolbar override for search */
+        .dash-search {
+          position: relative;
+        }
+        .dash-search-icon {
+          position: absolute;
+          left: 0.65rem;
+          top: 50%;
+          transform: translateY(-50%);
+          color: var(--text-muted);
+          pointer-events: none;
+          display: flex;
+        }
+        .dash-search input {
+          padding-left: 2.125rem !important;
+        }
+
+        .student-row-name { font-weight: 500; color: var(--text); }
+        .student-row-id { font-family: monospace; font-size: 0.78rem; color: var(--text-muted); }
+        .student-row-class { font-size: 0.8125rem; color: var(--text-muted); }
+        .student-row-fee { font-variant-numeric: tabular-nums; font-size: 0.875rem; }
+
+        .stat-card-inner {
+          display: flex;
+          flex-direction: column;
+        }
+        .stat-card-icon-wrap {
+          width: 36px; height: 36px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 0.875rem;
+          flex-shrink: 0;
+        }
+
+        /* Skeleton pulse */
+        @keyframes skel-pulse {
+          0%,100% { opacity:1; } 50% { opacity:0.5; }
+        }
+        .skel-block {
+          border-radius: 4px;
+          background: var(--border);
+          animation: skel-pulse 1.4s ease-in-out infinite;
+        }
       `}</style>
 
-      {/* aria-live region for screen readers */}
-      <div aria-live="polite" aria-atomic="true" className="sr-only" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap" }}>
-        {summaryLoading || studentsLoading ? "Loading dashboard data..." : "Dashboard data loaded."}
+      {/* Accessibility live regions */}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {summaryLoading || studentsLoading ? "Loading dashboard data…" : "Dashboard data loaded."}
       </div>
       {(summaryError || studentsError) && (
-        <div aria-live="assertive" aria-atomic="true" className="sr-only" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap" }}>
+        <div aria-live="assertive" aria-atomic="true" className="sr-only">
           {summaryError || studentsError}
         </div>
       )}
 
-      <div className="dash-wrap">
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: "1.5rem" }}>Dashboard</h1>
-            <p style={{ margin: "0.25rem 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>
-              Last sync: <strong>{timeAgo(lastSyncAt)}</strong>
-            </p>
-          </div>
-          <SyncButton onSyncComplete={handleSyncComplete} lastSyncTime={lastSyncAt} />
-        </div>
+      <div className="page-wrap dash-wrap">
 
-        {/* Alerts */}
+        {/* ── Centered Hero Header ──────────────────── */}
+        <PageHero
+          eyebrow="Admin Console"
+          title="Payments Dashboard"
+          subtitle="Monitor students, fees, and blockchain-settled payments in real time."
+        >
+          <SyncButton onSyncComplete={handleSyncComplete} lastSyncTime={lastSyncAt} />
+          <span style={{ alignSelf: "center", fontSize: "0.82rem", color: "rgba(255,255,255,0.85)" }}>
+            Last sync: <strong style={{ color: "#fff" }}>{timeAgo(lastSyncAt)}</strong>
+          </span>
+        </PageHero>
+
+        {/* ── Alerts ────────────────────────────────── */}
         {syncMsg && (
-          <div role="status" style={{ background: "#dcfce7", border: "1px solid #bbf7d0", borderRadius: 8, padding: "0.65rem 1rem", color: "#166534", fontSize: "0.875rem", margin: "1rem 0" }}>
-            ✓ {syncMsg}
+          <div role="status" className="alert alert-success" style={{ marginBottom: "1.25rem" }}>
+            <IconCheck size={16} />
+            <span>{syncMsg}</span>
           </div>
         )}
         {error && (
-          <div role="alert" style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "0.65rem 1rem", color: "#991b1b", fontSize: "0.875rem", margin: "1rem 0" }}>
-            {error}
+          <div role="alert" className="alert alert-danger" style={{ marginBottom: "1.25rem" }}>
+            <IconAlertTriangle size={16} />
+            <span>{error}</span>
           </div>
         )}
 
-        {/* Stats */}
+        {/* ── Stat Cards ────────────────────────────── */}
         <ErrorBoundary>
           {summaryError ? (
-            <div role="alert" style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "0.65rem 1rem", color: "#991b1b", fontSize: "0.875rem", margin: "1rem 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              {summaryError}
-              <button onClick={fetchSummary} style={{ marginLeft: "1rem", padding: "0.25rem 0.75rem", borderRadius: 6, border: "1px solid #fecaca", background: "transparent", color: "#991b1b", cursor: "pointer", fontSize: "0.8rem" }}>Retry</button>
+            <div role="alert" className="alert alert-danger" style={{ marginBottom: "1.5rem" }}>
+              <span style={{ flex: 1 }}>{summaryError}</span>
+              <button onClick={fetchSummary} className="btn btn-sm btn-ghost" style={{ color: "inherit", borderColor: "currentColor", opacity: 0.8 }}>Retry</button>
             </div>
           ) : (
-            <div className="stat-grid" style={{ marginTop: "1.5rem" }}>
-              {stats.map(({ label, value, sub, accent }) => (
-                <div key={label} className="stat-card">
-                  <div className="stat-label">{label}</div>
-                  {summaryLoading ? <div className="skeleton" /> : (
-                    <>
-                      <div className="stat-value" style={accent ? { color: accent } : {}}>{value}</div>
-                      {sub && <div className="stat-sub">{sub}</div>}
-                    </>
-                  )}
-                </div>
-              ))}
+            <div className="stat-grid" style={{ marginBottom: "1.75rem" }}>
+              {summaryLoading
+                ? Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="stat-card" aria-hidden="true">
+                      <div className="skel-block" style={{ width: 42, height: 42, borderRadius: 12, marginBottom: 16 }} />
+                      <div className="skel-block" style={{ width: "60%", height: 10, marginBottom: 12 }} />
+                      <div className="skel-block" style={{ width: "45%", height: 30 }} />
+                    </div>
+                  ))
+                : stats.map((s) => <StatCard key={s.label} {...s} />)
+              }
             </div>
           )}
         </ErrorBoundary>
 
-        {/* Toolbar — search + filters (server-side) */}
-        <div className="toolbar" role="search" aria-label="Filter students">
-          <input
-            type="search"
-            placeholder="Search by name or ID…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            aria-label="Search students by name or ID"
-          />
-          <select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            aria-label="Filter by payment status"
-          >
-            <option value="all">All Status</option>
-            <option value="paid">Paid</option>
-            <option value="partial">Partial</option>
-            <option value="unpaid">Unpaid</option>
-          </select>
-          <select
-            value={classFilter}
-            onChange={e => setClassFilter(e.target.value)}
-            aria-label="Filter by class"
-          >
-            <option value="">All Classes</option>
-            <option value="JSS1">JSS1</option>
-            <option value="JSS2">JSS2</option>
-            <option value="JSS3">JSS3</option>
-            <option value="SS1">SS1</option>
-            <option value="SS2">SS2</option>
-            <option value="SS3">SS3</option>
-          </select>
-        </div>
-
-        {/* Table */}
-        <ErrorBoundary>
-          {studentsError ? (
-            <div role="alert" style={{ background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "0.65rem 1rem", color: "#991b1b", fontSize: "0.875rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              {studentsError}
-              <button
-                onClick={() => fetchStudents(page, debouncedSearch, statusFilter, classFilter)}
-                style={{ marginLeft: "1rem", padding: "0.25rem 0.75rem", borderRadius: 6, border: "1px solid #fecaca", background: "transparent", color: "#991b1b", cursor: "pointer", fontSize: "0.8rem" }}
-              >
-                Retry
-              </button>
+        {/* ── Student Table ─────────────────────────── */}
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">Students</div>
+              {!studentsLoading && total > 0 && (
+                <div className="card-subtitle">{total.toLocaleString()} total</div>
+              )}
             </div>
-          ) : (
-            <div className="table-wrap" aria-busy={studentsLoading} aria-label="Student list">
-              {studentsLoading ? (
-                <table className="dash-table" aria-label="Loading students">
-                  <thead>
-                    <tr>
-                      <th>Student ID</th><th>Name</th><th>Class</th><th>Fee</th><th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <tr key={i}>
-                        <td><div className="skeleton" style={{ width: "70px" }} /></td>
-                        <td><div className="skeleton" style={{ width: "120px" }} /></td>
-                        <td><div className="skeleton" style={{ width: "80px" }} /></td>
-                        <td><div className="skeleton" style={{ width: "60px" }} /></td>
-                        <td><div className="skeleton" style={{ width: "55px" }} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <table className="dash-table">
+
+            {/* Toolbar */}
+            <div className="toolbar" role="search" aria-label="Filter students" style={{ margin: 0 }}>
+              <div className="dash-search">
+                <span className="dash-search-icon"><IconSearch size={14} /></span>
+                <input
+                  type="search"
+                  placeholder="Name or ID…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  aria-label="Search students by name or ID"
+                  style={{
+                    padding: "0.4rem 0.7rem",
+                    paddingLeft: "2.125rem",
+                    border: "1.5px solid var(--border)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: "0.8125rem",
+                    fontFamily: "inherit",
+                    color: "var(--text)",
+                    background: "var(--card-bg)",
+                    outline: "none",
+                    width: 180,
+                    transition: "border-color 0.15s, box-shadow 0.15s",
+                  }}
+                  onFocus={e => { e.target.style.borderColor = "var(--accent)"; e.target.style.boxShadow = "0 0 0 3px var(--accent-subtle)"; }}
+                  onBlur={e  => { e.target.style.borderColor = "var(--border)"; e.target.style.boxShadow = "none"; }}
+                />
+              </div>
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value)}
+                aria-label="Filter by payment status"
+                style={{
+                  padding: "0.4rem 0.7rem",
+                  border: "1.5px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "0.8125rem",
+                  fontFamily: "inherit",
+                  color: "var(--text)",
+                  background: "var(--card-bg)",
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="all">All Status</option>
+                <option value="paid">Paid</option>
+                <option value="partial">Partial</option>
+                <option value="unpaid">Unpaid</option>
+              </select>
+              <select
+                value={classFilter}
+                onChange={e => setClassFilter(e.target.value)}
+                aria-label="Filter by class"
+                style={{
+                  padding: "0.4rem 0.7rem",
+                  border: "1.5px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  fontSize: "0.8125rem",
+                  fontFamily: "inherit",
+                  color: "var(--text)",
+                  background: "var(--card-bg)",
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">All Classes</option>
+                {["JSS1","JSS2","JSS3","SS1","SS2","SS3"].map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Table */}
+          <ErrorBoundary>
+            {studentsError ? (
+              <div className="card-body">
+                <div role="alert" className="alert alert-danger">
+                  <span style={{ flex: 1 }}>{studentsError}</span>
+                  <button
+                    onClick={() => fetchStudents(page, debouncedSearch, statusFilter, classFilter)}
+                    className="btn btn-sm btn-ghost"
+                    style={{ color: "inherit", borderColor: "currentColor", opacity: 0.8 }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }} aria-busy={studentsLoading} aria-label="Student list">
+                <table className="data-table" aria-label={studentsLoading ? "Loading students" : "Student list"}>
                   <thead>
                     <tr>
                       <th scope="col">Student ID</th>
@@ -271,72 +380,106 @@ export default function Dashboard() {
                       <th scope="col">Class</th>
                       <th scope="col">Fee</th>
                       <th scope="col">Status</th>
+                      <th scope="col"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {students.length === 0 ? (
+                    {studentsLoading ? (
+                      Array.from({ length: 6 }).map((_, i) => (
+                        <tr key={i}>
+                          <td><div className="skel-block" style={{ height: 12, width: 72 }} /></td>
+                          <td><div className="skel-block" style={{ height: 12, width: 130 }} /></td>
+                          <td><div className="skel-block" style={{ height: 12, width: 44 }} /></td>
+                          <td><div className="skel-block" style={{ height: 12, width: 56 }} /></td>
+                          <td><div className="skel-block" style={{ height: 20, width: 52, borderRadius: 20 }} /></td>
+                          <td><div className="skel-block" style={{ height: 28, width: 42, borderRadius: 6 }} /></td>
+                        </tr>
+                      ))
+                    ) : students.length === 0 ? (
                       <tr>
-                        <td colSpan="5" style={{ textAlign: "center", padding: "2.5rem", color: "var(--muted)" }}>
-                          No students found.
+                        <td colSpan="6">
+                          <div className="empty-state">
+                            <div className="empty-state-icon"><IconSearch size={26} /></div>
+                            <div className="empty-state-title">No students found</div>
+                            <div className="empty-state-desc">
+                              {search || statusFilter !== "all" || classFilter ? "Try adjusting your search or filters." : "No students have been registered yet."}
+                            </div>
+                          </div>
                         </td>
                       </tr>
                     ) : students.map(s => {
                       const st = (s.status || "unpaid").toLowerCase();
-                      const badge = STATUS_COLOR[st] || STATUS_COLOR.unpaid;
+                      const badge = STATUS_BADGE[st] || STATUS_BADGE.unpaid;
                       return (
                         <tr key={s.studentId}>
-                          <td style={{ color: "var(--muted)", fontFamily: "monospace" }}>{s.studentId}</td>
-                          <td style={{ fontWeight: 500 }}>{s.name}</td>
-                          <td>{s.class}</td>
-                          <td>{s.feeAmount} XLM</td>
+                          <td className="col-mono">{s.studentId}</td>
+                          <td className="student-row-name">{s.name}</td>
+                          <td className="student-row-class">{s.class}</td>
+                          <td className="student-row-fee">
+                            <span style={{ fontVariantNumeric: "tabular-nums" }}>{s.feeAmount}</span>
+                            <span style={{ marginLeft: "0.25rem", fontSize: "0.72rem", color: "var(--text-muted)", fontWeight: 600 }}>XLM</span>
+                          </td>
                           <td>
-                            <span className="status-badge" style={badge}>{st}</span>
+                            <span className={badge.cls}>{badge.label}</span>
+                          </td>
+                          <td>
+                            <button
+                              onClick={() => handleEditStudent(s)}
+                              className="btn btn-sm btn-ghost"
+                            >
+                              Edit
+                            </button>
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
-              )}
+              </div>
+            )}
+          </ErrorBoundary>
+
+          {/* Pagination */}
+          {total > 0 && (
+            <div style={{ padding: "0.875rem 1.25rem", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
+              <span className="pagination-info" aria-live="polite" aria-atomic="true">
+                {studentsLoading ? "Loading…" : `${rangeStart}–${rangeEnd} of ${total.toLocaleString()} students`}
+              </span>
+              <nav className="pagination-controls" aria-label="Student list pagination">
+                <button
+                  className="page-btn"
+                  disabled={page === 1 || studentsLoading}
+                  onClick={() => setPage(p => p - 1)}
+                  aria-label="Previous page"
+                  style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+                >
+                  <IconChevronLeft size={15} /> Prev
+                </button>
+                <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)", padding: "0 0.25rem" }} aria-current="page">
+                  {page} / {pages}
+                </span>
+                <button
+                  className="page-btn"
+                  disabled={page === pages || studentsLoading}
+                  onClick={() => setPage(p => p + 1)}
+                  aria-label="Next page"
+                  style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+                >
+                  Next <IconChevronRight size={15} />
+                </button>
+              </nav>
             </div>
           )}
-        </ErrorBoundary>
-
-        {/* Pagination — always visible when there are students */}
-        {total > 0 && (
-          <div className="pagination-bar">
-            {/* Page-range summary */}
-            <span style={{ color: "var(--muted)" }} aria-live="polite" aria-atomic="true">
-              {studentsLoading
-                ? "Loading…"
-                : `Showing ${rangeStart}–${rangeEnd} of ${total.toLocaleString()} students`}
-            </span>
-
-            {/* Previous / Next controls */}
-            <nav className="pagination-controls" aria-label="Student list pagination">
-              <button
-                className="page-btn"
-                disabled={page === 1 || studentsLoading}
-                onClick={() => setPage(p => p - 1)}
-                aria-label="Go to previous page"
-              >
-                ← Prev
-              </button>
-              <span style={{ color: "var(--muted)" }} aria-current="page">
-                Page {page} of {pages}
-              </span>
-              <button
-                className="page-btn"
-                disabled={page === pages || studentsLoading}
-                onClick={() => setPage(p => p + 1)}
-                aria-label="Go to next page"
-              >
-                Next →
-              </button>
-            </nav>
-          </div>
-        )}
+        </div>
       </div>
+
+      {editingStudentData && (
+        <StudentForm
+          student={editingStudentData}
+          onClose={handleCloseForm}
+          onSave={handleSaveStudent}
+        />
+      )}
     </>
   );
 }

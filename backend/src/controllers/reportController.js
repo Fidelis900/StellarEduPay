@@ -4,85 +4,50 @@ const { generateReport, reportToCsv, getDashboardMetrics } = require('../service
 const { get, set, KEYS, TTL } = require('../cache');
 const School = require('../models/schoolModel');
 
-/**
- * GET /api/reports
- * Query params: startDate, endDate, format (json|csv)
- *
- * Returns a payment summary report scoped to the current school.
- */
+const ISO_8601 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?Z)?$/;
+
 async function getReport(req, res, next) {
   try {
     const { startDate, endDate, format = 'json' } = req.query;
 
-    // Strict ISO 8601: YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss[.sss]Z
-    const ISO_8601 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?Z)?$/;
-
-    if (startDate && (!ISO_8601.test(startDate) || isNaN(Date.parse(startDate)))) {
-      const err = new Error('Invalid startDate — must be ISO 8601 (e.g. 2026-01-01 or 2026-01-01T00:00:00Z)');
-      err.code = 'INVALID_DATE_FORMAT';
-      return next(err);
+    for (const [name, val] of [['startDate', startDate], ['endDate', endDate]]) {
+      if (val && (!ISO_8601.test(val) || isNaN(Date.parse(val))))
+        return next(Object.assign(new Error(`Invalid ${name} — must be ISO 8601`), { code: 'INVALID_DATE_FORMAT' }));
     }
-    if (endDate && (!ISO_8601.test(endDate) || isNaN(Date.parse(endDate)))) {
-      const err = new Error('Invalid endDate — must be ISO 8601 (e.g. 2026-12-31 or 2026-12-31T23:59:59Z)');
-      err.code = 'INVALID_DATE_FORMAT';
-      return next(err);
-    }
-    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
-      const err = new Error('startDate must be before or equal to endDate');
-      err.code = 'INVALID_DATE_FORMAT';
-      return next(err);
-    }
+    if (startDate && endDate && new Date(startDate) > new Date(endDate))
+      return next(Object.assign(new Error('startDate must be before or equal to endDate'), { code: 'INVALID_DATE_FORMAT' }));
 
     const school = await School.findOne({ schoolId: req.schoolId }).lean();
     const timezone = school?.timezone || 'UTC';
-
     const cacheKey = KEYS.report(startDate, endDate);
     let report = get(cacheKey);
-    if (report === undefined) {
-      report = await generateReport({ schoolId: req.schoolId, startDate, endDate, timezone });
-      set(cacheKey, report, TTL.REPORT);
-    }
+    if (report === undefined) { report = await generateReport({ schoolId: req.schoolId, startDate, endDate, timezone }); set(cacheKey, report, TTL.REPORT); }
 
     if (format === 'csv') {
-      const csv = reportToCsv(report);
-      const filename = buildFilename(startDate, endDate);
+      const s = startDate || null;
+      const e = endDate   || null;
+      let filename;
+      if (s && e)       filename = `report-${s}-to-${e}.csv`;
+      else if (s)       filename = `report-${s}-to-all-time.csv`;
+      else if (e)       filename = `report-all-time-to-${e}.csv`;
+      else              filename = 'report-all-time.csv';
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      return res.send(csv);
+      return res.send(reportToCsv(report));
     }
 
     res.json(report);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 }
 
-function buildFilename(startDate, endDate) {
-  if (startDate && endDate) return `report-${startDate}-to-${endDate}.csv`;
-  if (startDate) return `report-${startDate}-to-all-time.csv`;
-  if (endDate) return `report-all-time-to-${endDate}.csv`;
-  return 'report-all-time.csv';
-}
-
-/**
- * GET /api/reports/dashboard
- * Returns aggregated metrics for the frontend dashboard.
- */
 async function getDashboard(req, res, next) {
   try {
     const school = await School.findOne({ schoolId: req.schoolId }).lean();
-    const timezone = school?.timezone || 'UTC';
-
     const cacheKey = `dashboard:${req.schoolId}`;
     let metrics = get(cacheKey);
-    if (metrics === undefined) {
-      metrics = await getDashboardMetrics({ schoolId: req.schoolId, timezone });
-      set(cacheKey, metrics, TTL.REPORT);
-    }
+    if (metrics === undefined) { metrics = await getDashboardMetrics({ schoolId: req.schoolId, timezone: school?.timezone || 'UTC' }); set(cacheKey, metrics, TTL.REPORT); }
     res.json(metrics);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 }
 
 module.exports = { getReport, getDashboard };

@@ -5,27 +5,52 @@ import {
   updateFeeAdjustmentRule,
   deleteFeeAdjustmentRule,
 } from "../services/api";
+import { getErrorMessage } from "../utils/errorMessages";
+import { IconAlertTriangle, IconCheck } from "../components/Icons";
+import PageHero from "../components/PageHero";
 
 const SCHOOL_ID = process.env.NEXT_PUBLIC_SCHOOL_ID || "SCH001";
 
 const RULE_TYPES = [
   { value: "discount_percentage", label: "Discount %" },
-  { value: "discount_fixed",      label: "Discount (fixed)" },
+  { value: "discount_fixed",      label: "Discount (fixed XLM)" },
   { value: "penalty_percentage",  label: "Penalty %" },
-  { value: "penalty_fixed",       label: "Penalty (fixed)" },
+  { value: "penalty_fixed",       label: "Penalty (fixed XLM)" },
   { value: "waiver",              label: "Full waiver" },
 ];
 
-const EMPTY_FORM = { name: "", type: "discount_percentage", value: "", priority: 10, description: "", isActive: true };
+const EMPTY_FORM = {
+  name: "",
+  type: "discount_percentage",
+  value: "",
+  priority: 10,
+  description: "",
+  isActive: true,
+};
+
+function RuleTypePill({ type }) {
+  const t = RULE_TYPES.find(r => r.value === type);
+  const label = t?.label ?? type;
+  const isDiscount = type.startsWith("discount") || type === "waiver";
+  return (
+    <span
+      className={`badge ${isDiscount ? "badge-success" : "badge-danger"}`}
+      style={{ fontSize: "0.7rem", textTransform: "none" }}
+    >
+      {label}
+    </span>
+  );
+}
 
 export default function FeeAdjustments() {
-  const [rules, setRules]       = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState(null);
-  const [form, setForm]         = useState(EMPTY_FORM);
-  const [editId, setEditId]     = useState(null);
-  const [saving, setSaving]     = useState(false);
-  const [formError, setFormError] = useState(null);
+  const [rules, setRules]           = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState(null);
+  const [form, setForm]             = useState(EMPTY_FORM);
+  const [editId, setEditId]         = useState(null);
+  const [saving, setSaving]         = useState(false);
+  const [formError, setFormError]   = useState(null);
+  const [formSuccess, setFormSuccess] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -49,17 +74,21 @@ export default function FeeAdjustments() {
       isActive: rule.isActive,
     });
     setFormError(null);
+    setFormSuccess(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function cancelEdit() {
     setEditId(null);
     setForm(EMPTY_FORM);
     setFormError(null);
+    setFormSuccess(false);
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setFormError(null);
+    setFormSuccess(false);
     const payload = {
       ...form,
       value: Number(form.value),
@@ -72,10 +101,14 @@ export default function FeeAdjustments() {
       } else {
         await createFeeAdjustmentRule(payload, SCHOOL_ID);
       }
+      setFormSuccess(true);
+      setTimeout(() => setFormSuccess(false), 3000);
       cancelEdit();
       load();
     } catch (err) {
-      setFormError(err.response?.data?.error || "Save failed.");
+      setFormError(
+        getErrorMessage(err.response?.data?.code, err.response?.data?.error) || "Save failed."
+      );
     } finally {
       setSaving(false);
     }
@@ -94,167 +127,273 @@ export default function FeeAdjustments() {
   return (
     <>
       <style>{`
-        .fa-wrap { max-width: 860px; margin: 0 auto; padding: 2rem 1rem; }
-        .fa-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; }
-        .fa-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-        .fa-form label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; color: var(--muted); }
-        .fa-form input, .fa-form select, .fa-form textarea {
-          padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 6px;
-          font-size: 0.9rem; background: var(--bg); color: var(--text);
+        .fa-form-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1rem;
         }
-        .fa-form input:focus, .fa-form select:focus { border-color: var(--accent); outline: none; }
-        .fa-form .full { grid-column: 1 / -1; }
-        .fa-btn { padding: 0.5rem 1.25rem; border-radius: 6px; border: none; cursor: pointer; font-size: 0.875rem; font-weight: 600; }
-        .fa-btn-primary { background: var(--accent); color: #fff; }
-        .fa-btn-ghost  { background: transparent; border: 1px solid var(--border); color: var(--text); }
-        .fa-btn-danger { background: transparent; border: 1px solid #fecaca; color: #991b1b; }
-        .fa-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-        .fa-table th { text-align: left; padding: 0.5rem 0.75rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
-        .fa-table td { padding: 0.75rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
-        .fa-table tbody tr:last-child td { border-bottom: none; }
-        .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 20px; font-size: 0.72rem; font-weight: 600; }
-        .badge-active   { background: #dcfce7; color: #166534; }
-        .badge-inactive { background: #f3f4f6; color: #6b7280; }
-        .alert-err { background: #fee2e2; border: 1px solid #fecaca; border-radius: 8px; padding: 0.65rem 1rem; color: #991b1b; font-size: 0.875rem; margin-bottom: 1rem; }
-        .hint { font-size: 0.78rem; color: var(--muted); margin-top: 0.25rem; }
+        .fa-form-grid .full { grid-column: 1 / -1; }
+        @media (max-width: 560px) {
+          .fa-form-grid { grid-template-columns: 1fr; }
+          .fa-form-grid .full { grid-column: 1; }
+        }
+        .fa-priority-hint {
+          font-size: 0.72rem;
+          color: var(--text-muted);
+          margin-top: 0.2rem;
+        }
+        .fa-checkbox-row {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.875rem;
+          cursor: pointer;
+          padding: 0.2rem 0;
+        }
+        .fa-checkbox-row input[type=checkbox] {
+          width: 16px;
+          height: 16px;
+          accent-color: var(--accent);
+          cursor: pointer;
+        }
+        .fa-actions { display: flex; gap: 0.375rem; justify-content: flex-end; }
       `}</style>
 
-      <div className="fa-wrap">
-        <h1 style={{ margin: "0 0 0.25rem", fontSize: "1.5rem" }}>Fee Adjustment Rules</h1>
-        <p className="hint" style={{ marginBottom: "1.5rem" }}>
-          Rules are applied in ascending priority order (lower number = applied first).
-        </p>
+      <div className="page-wrap">
+        <PageHero
+          eyebrow="Configuration"
+          title="Fee Adjustment Rules"
+          subtitle="Discounts, penalties and waivers — applied in ascending priority order (lower number first)."
+        />
 
-        {/* Form */}
-        <div className="fa-card">
-          <h2 style={{ margin: "0 0 1rem", fontSize: "1rem" }}>
-            {editId ? "Edit Rule" : "New Rule"}
-          </h2>
-          {formError && <div className="alert-err">{formError}</div>}
-          <form onSubmit={handleSubmit}>
-            <div className="fa-form">
-              <label>
-                Name *
-                <input
-                  required
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. Early Bird Discount"
-                />
-              </label>
+        {/* ── Form ─────────────────────────────────────── */}
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <div className="card-header">
+            <div className="card-title">{editId ? "Edit Rule" : "New Rule"}</div>
+            {editId && (
+              <button className="btn btn-sm btn-ghost" onClick={cancelEdit}>Cancel</button>
+            )}
+          </div>
+          <div className="card-body">
+            {formError && (
+              <div role="alert" className="alert alert-danger" style={{ marginBottom: "1rem" }}>
+                <IconAlertTriangle size={15} />
+                <span>{formError}</span>
+              </div>
+            )}
+            {formSuccess && (
+              <div role="status" className="alert alert-success" style={{ marginBottom: "1rem" }}>
+                <IconCheck size={15} />
+                <span>Rule saved successfully.</span>
+              </div>
+            )}
 
-              <label>
-                Type *
-                <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
-                  {RULE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-              </label>
-
-              <label>
-                Value *
-                <input
-                  required
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={form.value}
-                  onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
-                  placeholder="e.g. 10"
-                />
-              </label>
-
-              <label>
-                Priority
-                <input
-                  type="number"
-                  min="0"
-                  value={form.priority}
-                  onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
-                />
-                <span className="hint">Lower = applied first (default: 10)</span>
-              </label>
-
-              <label className="full">
-                Description
-                <input
-                  value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="Optional description"
-                />
-              </label>
-
-              {editId && (
-                <label style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
+            <form onSubmit={handleSubmit}>
+              <div className="fa-form-grid">
+                <div className="form-group">
+                  <label className="form-label">Name *</label>
                   <input
-                    type="checkbox"
-                    checked={form.isActive}
-                    onChange={e => setForm(f => ({ ...f, isActive: e.target.checked }))}
+                    required
+                    className="form-input"
+                    value={form.name}
+                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                    placeholder="e.g. Early Bird Discount"
                   />
-                  Active
-                </label>
-              )}
-            </div>
+                </div>
 
-            <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
-              <button type="submit" className="fa-btn fa-btn-primary" disabled={saving}>
-                {saving ? "Saving…" : editId ? "Update" : "Create"}
-              </button>
-              {editId && (
-                <button type="button" className="fa-btn fa-btn-ghost" onClick={cancelEdit}>
-                  Cancel
+                <div className="form-group">
+                  <label className="form-label">Type *</label>
+                  <select
+                    className="form-input form-select"
+                    value={form.type}
+                    onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+                  >
+                    {RULE_TYPES.map(t => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">
+                    Value{form.type === "waiver" ? " (N/A)" : " *"}
+                  </label>
+                  <input
+                    required={form.type !== "waiver"}
+                    disabled={form.type === "waiver"}
+                    type="number"
+                    min="0"
+                    step="any"
+                    className="form-input"
+                    value={form.value}
+                    onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
+                    placeholder={form.type.includes("percentage") ? "e.g. 10" : "e.g. 50"}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Priority</label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="form-input"
+                    value={form.priority}
+                    onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
+                  />
+                  <p className="fa-priority-hint">Lower number = applied first (default: 10)</p>
+                </div>
+
+                <div className="form-group full">
+                  <label className="form-label">Description</label>
+                  <input
+                    className="form-input"
+                    value={form.description}
+                    onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                    placeholder="Optional — visible to admins only"
+                  />
+                </div>
+
+                {editId && (
+                  <div className="form-group">
+                    <label className="fa-checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={form.isActive}
+                        onChange={e => setForm(f => ({ ...f, isActive: e.target.checked }))}
+                      />
+                      Rule is active
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ marginTop: "0.25rem", display: "flex", gap: "0.5rem" }}>
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? "Saving…" : editId ? "Update Rule" : "Create Rule"}
                 </button>
-              )}
-            </div>
-          </form>
+                {editId && (
+                  <button type="button" className="btn btn-ghost" onClick={cancelEdit}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
         </div>
 
-        {/* Rules table */}
-        {error && <div className="alert-err">{error}</div>}
-        <div className="fa-card" style={{ padding: 0, overflow: "hidden" }}>
+        {/* ── Rules Table ────────────────────────────── */}
+        {error && (
+          <div role="alert" className="alert alert-danger" style={{ marginBottom: "1rem" }}>
+            <IconAlertTriangle size={15} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">Rules</div>
+            <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+              {rules.length} rule{rules.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+
           {loading ? (
-            <div style={{ padding: "2rem", textAlign: "center", color: "var(--muted)" }}>Loading…</div>
-          ) : rules.length === 0 ? (
-            <div style={{ padding: "2rem", textAlign: "center", color: "var(--muted)" }}>No rules yet.</div>
-          ) : (
-            <table className="fa-table">
-              <thead>
-                <tr>
-                  <th>Priority</th>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Value</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rules.map(rule => (
-                  <tr key={rule._id}>
-                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{rule.priority ?? 10}</td>
-                    <td style={{ fontWeight: 500 }}>{rule.name}</td>
-                    <td style={{ color: "var(--muted)", fontSize: "0.8rem" }}>
-                      {RULE_TYPES.find(t => t.value === rule.type)?.label ?? rule.type}
-                    </td>
-                    <td>{rule.type === "waiver" ? "—" : rule.value}</td>
-                    <td>
-                      <span className={`badge ${rule.isActive ? "badge-active" : "badge-inactive"}`}>
-                        {rule.isActive ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                    <td style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
-                      <button className="fa-btn fa-btn-ghost" style={{ fontSize: "0.8rem", padding: "0.3rem 0.75rem" }} onClick={() => startEdit(rule)}>
-                        Edit
-                      </button>
-                      {rule.isActive && (
-                        <button className="fa-btn fa-btn-danger" style={{ fontSize: "0.8rem", padding: "0.3rem 0.75rem" }} onClick={() => handleDeactivate(rule)}>
-                          Deactivate
-                        </button>
-                      )}
-                    </td>
+            <div style={{ overflowX: "auto" }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Priority</th><th>Name</th><th>Type</th><th>Value</th>
+                    <th>Status</th><th></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <tr key={i}>
+                      {[30,140,120,50,60,80].map((w, j) => (
+                        <td key={j}><div className="skeleton" style={{ height: 12, width: w }} /></td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : rules.length === 0 ? (
+            <div style={{ padding: "3rem", textAlign: "center", color: "var(--text-muted)" }}>
+              <p style={{ fontWeight: 500, marginBottom: "0.25rem" }}>No rules yet</p>
+              <p style={{ fontSize: "0.8125rem" }}>Create a rule above to get started.</p>
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Priority</th>
+                    <th scope="col">Name</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Value</th>
+                    <th scope="col">Status</th>
+                    <th scope="col" style={{ textAlign: "right" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rules.map(rule => (
+                    <tr key={rule._id}>
+                      <td style={{ fontVariantNumeric: "tabular-nums", width: 60 }}>
+                        <span style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 28, height: 28,
+                          borderRadius: "50%",
+                          background: "var(--bg-subtle, var(--bg))",
+                          border: "1px solid var(--border)",
+                          fontSize: "0.75rem",
+                          fontWeight: 700,
+                          color: "var(--text-muted)",
+                        }}>
+                          {rule.priority ?? 10}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{rule.name}</div>
+                        {rule.description && (
+                          <div style={{ fontSize: "0.775rem", color: "var(--text-muted)", marginTop: "0.125rem" }}>
+                            {rule.description}
+                          </div>
+                        )}
+                      </td>
+                      <td><RuleTypePill type={rule.type} /></td>
+                      <td style={{ fontVariantNumeric: "tabular-nums" }}>
+                        {rule.type === "waiver" ? "—" : rule.value}
+                      </td>
+                      <td>
+                        <span className={`badge ${rule.isActive ? "badge-success" : "badge-neutral"}`}>
+                          {rule.isActive ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="fa-actions">
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => startEdit(rule)}
+                          >
+                            Edit
+                          </button>
+                          {rule.isActive && (
+                            <button
+                              className="btn btn-sm btn-danger"
+                              onClick={() => handleDeactivate(rule)}
+                            >
+                              Deactivate
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       </div>
