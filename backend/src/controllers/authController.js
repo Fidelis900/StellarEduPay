@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto = require('crypto');
+const logger = require('../utils/logger');
+const { getRedisClient } = require('../config/redisClient');
 
 /**
  * Constant-time string comparison to prevent timing attacks.
@@ -23,25 +25,37 @@ function getStore() {
   if (_store) return _store;
 
   if (process.env.REDIS_HOST) {
-    const Redis = require('ioredis');
-    const client = new Redis({
-      host: process.env.REDIS_HOST,
-      port: parseInt(process.env.REDIS_PORT, 10) || 6379,
-      password: process.env.REDIS_PASSWORD || undefined,
-      lazyConnect: true,
-      enableOfflineQueue: false,
-    });
-    _store = {
-      async set(token, ttlSeconds) {
-        await client.set(`refresh:${token}`, '1', 'EX', ttlSeconds);
-      },
-      async has(token) {
-        return (await client.exists(`refresh:${token}`)) === 1;
-      },
-      async del(token) {
-        await client.del(`refresh:${token}`);
-      },
-    };
+    const client = getRedisClient();
+    if (client && client.status === 'ready') {
+      _store = {
+        async set(token, ttlSeconds) {
+          await client.set(`refresh:${token}`, '1', 'EX', ttlSeconds);
+        },
+        async has(token) {
+          return (await client.exists(`refresh:${token}`)) === 1;
+        },
+        async del(token) {
+          await client.del(`refresh:${token}`);
+        },
+      };
+    } else {
+      logger.warn('[AuthController] Redis unavailable — falling back to in-memory refresh token store');
+      const map = new Map();
+      _store = {
+        async set(token, ttlSeconds) {
+          map.set(token, Date.now() + ttlSeconds * 1000);
+        },
+        async has(token) {
+          const exp = map.get(token);
+          if (!exp) return false;
+          if (Date.now() > exp) { map.delete(token); return false; }
+          return true;
+        },
+        async del(token) {
+          map.delete(token);
+        },
+      };
+    }
   } else {
     // In-process fallback — counters reset on restart (acceptable for single-process/dev)
     const map = new Map();

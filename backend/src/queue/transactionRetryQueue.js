@@ -6,8 +6,8 @@
  * comprehensive monitoring, and idempotency guarantees.
  */
 
-const { Queue, Worker, QueueEvents, QueueMetrics } = require('bullmq');
-const Redis = require('ioredis');
+const { Queue, Worker, QueueEvents } = require('bullmq');
+const { getRedisClient, getRedisStatus } = require('../config/redisClient');
 
 // Environment configuration
 const config = {
@@ -75,17 +75,19 @@ const eventLog = [];
  */
 function initializeRedisConnection() {
   if (!redisConnection) {
-    redisConnection = new Redis(config.redis);
-    
-    redisConnection.on('error', (err) => {
-      console.error('[TransactionRetryQueue] Redis connection error:', err.message);
-      jobMetrics.queueHealth = 'unhealthy';
-    });
-    
-    redisConnection.on('connect', () => {
-      console.log('[TransactionRetryQueue] Redis connected successfully');
-      jobMetrics.queueHealth = 'healthy';
-    });
+    redisConnection = getRedisClient();
+
+    if (redisConnection) {
+      redisConnection.on('error', (err) => {
+        console.error('[TransactionRetryQueue] Redis connection error:', err.message);
+        jobMetrics.queueHealth = 'unhealthy';
+      });
+
+      redisConnection.on('ready', () => {
+        console.log('[TransactionRetryQueue] Redis connected successfully');
+        jobMetrics.queueHealth = 'healthy';
+      });
+    }
   }
   return redisConnection;
 }
@@ -95,8 +97,12 @@ function initializeRedisConnection() {
  */
 function createTransactionRetryQueue() {
   if (!transactionRetryQueue) {
+    const redisConnection = initializeRedisConnection();
+    if (!redisConnection) {
+      throw new Error('Redis unavailable for retry queue initialization');
+    }
     transactionRetryQueue = new Queue(QUEUE_NAMES.TRANSACTION_RETRY, {
-      connection: initializeRedisConnection(),
+      connection: redisConnection,
       defaultJobOptions: {
         attempts: config.retry.maxAttempts,
         backoff: {
@@ -120,8 +126,12 @@ function createTransactionRetryQueue() {
  */
 function createDeadLetterQueue() {
   if (!deadLetterQueue && config.dlq.enabled) {
+    const redisConnection = initializeRedisConnection();
+    if (!redisConnection) {
+      throw new Error('Redis unavailable for dead-letter queue initialization');
+    }
     deadLetterQueue = new Queue(QUEUE_NAMES.DEAD_LETTER, {
-      connection: initializeRedisConnection(),
+      connection: redisConnection,
       defaultJobOptions: {
         attempts: 1, // No retries for dead-lettered jobs
         removeOnComplete: {
@@ -140,8 +150,12 @@ function createDeadLetterQueue() {
  */
 function createQueueEvents() {
   if (!queueEvents) {
+    const redisConnection = initializeRedisConnection();
+    if (!redisConnection) {
+      throw new Error('Redis unavailable for queue events initialization');
+    }
     queueEvents = new QueueEvents(QUEUE_NAMES.TRANSACTION_RETRY, {
-      connection: initializeRedisConnection(),
+      connection: redisConnection,
     });
   }
   return queueEvents;
@@ -398,12 +412,46 @@ function createRetryWorker() {
  * Set up queue event listeners for monitoring
  */
 function setupEventListeners() {
-  const events = createQueueEvents();
-  
-  events.on('waiting', ({ jobId }) => {
-    jobMetrics.totalJobs++;
-    logEvent('EVENT_WAITING', { jobId });
-  });
+  try {
+    const events = createQueueEvents();
+
+    events.on('waiting', ({ jobId }) => {
+      jobMetrics.totalJobs++;
+      logEvent('EVENT_WAITING', { jobId });
+    });
+
+    events.on('active', ({ jobId, prev }) => {
+      logEvent('EVENT_ACTIVE', { jobId, previousState: prev });
+    });
+
+    events.on('completed', ({ jobId, returnvalue }) => {
+      logEvent('EVENT_COMPLETED', { jobId, result: returnvalue });
+    });
+
+    events.on('failed', ({ jobId, failedReason }) => {
+      logEvent('EVENT_FAILED', { jobId, reason: failedReason });
+    });
+
+    events.on('stalled', ({ jobId }) => {
+      logEvent('EVENT_STALLED', { jobId });
+    });
+
+    events.on('retries-exhausted', ({ jobId }) => {
+      logEvent('EVENT_RETRIES_EXHAUSTED', { jobId });
+    });
+
+    events.on('progress', ({ jobId, progress }) => {
+      logEvent('EVENT_PROGRESS', { jobId, progress });
+    });
+
+    logEvent('EVENT_LISTENERS_SETUP', {
+      queueName: QUEUE_NAMES.TRANSACTION_RETRY,
+    });
+  } catch (err) {
+    console.error('[TransactionRetryQueue] Failed to setup event listeners:', err.message);
+    jobMetrics.queueHealth = 'unhealthy';
+  }
+}
   
   events.on('active', ({ jobId, prev }) => {
     logEvent('EVENT_ACTIVE', { jobId, previousState: prev });
@@ -499,38 +547,60 @@ async function addTransactionToRetryQueue(transactionHash, studentId = null, met
  * Get queue statistics and health metrics
  */
 async function getQueueStats() {
-  const queue = createTransactionRetryQueue();
-  
-  const [waiting, active, completed, failed, delayed] = await Promise.all([
-    queue.getWaitingCount(),
-    queue.getActiveCount(),
-    queue.getCompletedCount(),
-    queue.getFailedCount(),
-    queue.getDelayedCount(),
-  ]);
-  
-  return {
-    queue: QUEUE_NAMES.TRANSACTION_RETRY,
-    health: jobMetrics.queueHealth,
-    metrics: {
-      ...jobMetrics,
-      waiting,
-      active,
-      completed,
-      failed,
-      delayed,
-      totalJobs: waiting + active + completed + failed + delayed,
-    },
-    config: {
-      maxAttempts: config.retry.maxAttempts,
-      initialDelay: config.retry.initialDelay,
-      maxDelay: config.retry.maxDelay,
-      backoffMultiplier: config.retry.backoffMultiplier,
-      concurrency: config.worker.concurrency,
-      dlqEnabled: config.dlq.enabled,
-    },
-    recentEvents: eventLog.slice(-50), // Last 50 events
-  };
+  try {
+    const queue = createTransactionRetryQueue();
+
+    const [waiting, active, completed, failed, delayed] = await Promise.all([
+      queue.getWaitingCount(),
+      queue.getActiveCount(),
+      queue.getCompletedCount(),
+      queue.getFailedCount(),
+      queue.getDelayedCount(),
+    ]);
+
+    return {
+      queue: QUEUE_NAMES.TRANSACTION_RETRY,
+      health: jobMetrics.queueHealth,
+      redisStatus: getRedisStatus(),
+      metrics: {
+        ...jobMetrics,
+        waiting,
+        active,
+        completed,
+        failed,
+        delayed,
+        totalJobs: waiting + active + completed + failed + delayed,
+      },
+      config: {
+        maxAttempts: config.retry.maxAttempts,
+        initialDelay: config.retry.initialDelay,
+        maxDelay: config.retry.maxDelay,
+        backoffMultiplier: config.retry.backoffMultiplier,
+        concurrency: config.worker.concurrency,
+        dlqEnabled: config.dlq.enabled,
+      },
+      recentEvents: eventLog.slice(-50), // Last 50 events
+    };
+  } catch (err) {
+    return {
+      queue: QUEUE_NAMES.TRANSACTION_RETRY,
+      health: 'unhealthy',
+      redisStatus: getRedisStatus(),
+      metrics: {
+        ...jobMetrics,
+      },
+      config: {
+        maxAttempts: config.retry.maxAttempts,
+        initialDelay: config.retry.initialDelay,
+        maxDelay: config.retry.maxDelay,
+        backoffMultiplier: config.retry.backoffMultiplier,
+        concurrency: config.worker.concurrency,
+        dlqEnabled: config.dlq.enabled,
+      },
+      recentEvents: eventLog.slice(-50),
+      error: err.message,
+    };
+  }
 }
 
 /**
@@ -603,33 +673,38 @@ async function initializeQueue() {
   console.log('[TransactionRetryQueue] Initializing...');
   console.log('[TransactionRetryQueue] Configuration:', JSON.stringify(config, null, 2));
   
-  // Initialize Redis connection
-  initializeRedisConnection();
-  
-  // Create queues
-  createTransactionRetryQueue();
-  createDeadLetterQueue();
-  
-  // Set up event listeners
-  setupEventListeners();
-  
-  // Create and start worker
-  createRetryWorker();
-  
-  logEvent('QUEUE_INITIALIZED', {
-    timestamp: new Date().toISOString(),
-    config,
-  });
-  
-  console.log('[TransactionRetryQueue] Initialization complete');
-  return {
-    queue: transactionRetryQueue,
-    worker: retryWorker,
-    addJob: addTransactionToRetryQueue,
-    getStats: getQueueStats,
-    getDLQStats,
-    shutdown: shutdownQueue,
-  };
+  try {
+    // Initialize Redis connection
+    initializeRedisConnection();
+    
+    // Create queues
+    createTransactionRetryQueue();
+    createDeadLetterQueue();
+    
+    // Set up event listeners
+    setupEventListeners();
+    
+    // Create and start worker
+    createRetryWorker();
+    
+    logEvent('QUEUE_INITIALIZED', {
+      timestamp: new Date().toISOString(),
+      config,
+    });
+    
+    console.log('[TransactionRetryQueue] Initialization complete');
+    return {
+      queue: transactionRetryQueue,
+      worker: retryWorker,
+      addJob: addTransactionToRetryQueue,
+      getStats: getQueueStats,
+      getDLQStats,
+      shutdown: shutdownQueue,
+    };
+  } catch (err) {
+    console.error('[TransactionRetryQueue] Initialization failed:', err.message);
+    throw err;
+  }
 }
 
 module.exports = {

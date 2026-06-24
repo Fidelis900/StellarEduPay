@@ -29,6 +29,7 @@ const Bottleneck = require('bottleneck');
 const { Server, Networks, Asset, Keypair, TransactionBuilder, Operation } = require('@stellar/stellar-sdk');
 const config = require('../config');
 const logger = require('../utils/logger');
+const { getRedisClient, getRedisStatus } = require('../config/redisClient');
 
 // Redis connection is optional – only required for distributed mode.
 let IORedisConnection;
@@ -48,24 +49,21 @@ function _createRedisClient() {
   if (!process.env.REDIS_HOST) return null;
 
   try {
-    const Redis = require('ioredis');
-    const client = new Redis({
-      host: process.env.REDIS_HOST,
-      port: parseInt(process.env.REDIS_PORT) || 6379,
-      password: process.env.REDIS_PASSWORD || undefined,
-      // Fail fast on connection errors so we can fall back to in-memory.
-      enableOfflineQueue: false,
-      lazyConnect: true,
-      maxRetriesPerRequest: 1,
-    });
+    const client = getRedisClient();
+    if (!client) {
+      logger.warn('[StellarRateLimitedClient] Redis is configured but unavailable; using in-memory limiter');
+      return null;
+    }
 
-    client.on('error', (err) => {
-      logger.warn('[StellarRateLimitedClient] Redis error – falling back to in-memory limiter:', err.message);
-    });
+    if (client.status !== 'ready') {
+      client.on('error', (err) => {
+        logger.warn('[StellarRateLimitedClient] Redis error – falling back to in-memory limiter:', err.message);
+      });
+    }
 
     return client;
   } catch (err) {
-    logger.warn('[StellarRateLimitedClient] Could not create Redis client:', err.message);
+    logger.warn('[StellarRateLimitedClient] Could not obtain centralized Redis client:', err.message);
     return null;
   }
 }

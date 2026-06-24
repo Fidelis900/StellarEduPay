@@ -12,33 +12,10 @@
 'use strict';
 
 const { logger } = require('../utils/logger');
+const { getRedisClient, resetRedisClient } = require('../config/redisClient');
 
-// ── Redis client (optional) ────────────────────────────────────────────────────
-// When REDIS_HOST is configured, rate-limit counters are stored in Redis so
-// they survive server restarts and are shared across multiple instances.
-// Without REDIS_HOST the middleware falls back to an in-process Map, which
-// resets on restart (acceptable for single-process / development deployments).
-let _redisClient = null;
-function getRedisClient() {
-  if (_redisClient) return _redisClient;
-  if (!process.env.REDIS_HOST) return null;
-  try {
-    const Redis = require('ioredis');
-    _redisClient = new Redis({
-      host: process.env.REDIS_HOST,
-      port: parseInt(process.env.REDIS_PORT, 10) || 6379,
-      password: process.env.REDIS_PASSWORD || undefined,
-      lazyConnect: true,
-      enableOfflineQueue: false,
-    });
-    _redisClient.on('error', (err) =>
-      logger.error('[RateLimiter] Redis error — falling back to in-memory', { error: err.message })
-    );
-    return _redisClient;
-  } catch {
-    return null;
-  }
-}
+// Redis client is centralized in backend/src/config/redisClient.js. If Redis is
+// unavailable we fall back to the local in-memory rate limiter.
 
 // ── Circuit Breaker States ─────────────────────────────────────────────────────
 const CIRCUIT_STATES = {

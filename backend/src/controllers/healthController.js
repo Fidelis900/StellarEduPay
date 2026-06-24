@@ -59,12 +59,20 @@ async function healthCheck(req, res) {
   // - healthy: DB is up AND Stellar is ok
   // - degraded: DB is up BUT Stellar is unreachable
   // - unhealthy: DB is down
+  const retrySelector = require('../services/retryServiceSelector');
+  const retryBackend = retrySelector.getSelectedBackend();
+  const redisStatus = getRedisStatus();
+  const redisConfigured = Boolean(redisStatus.configured);
+
   let overallStatus = 'healthy';
   let statusCode = 200;
 
   if (db.healthy !== true) {
     overallStatus = 'unhealthy';
     statusCode = 503;
+  } else if (redisConfigured && redisStatus.status !== 'ready') {
+    overallStatus = 'degraded';
+    statusCode = 200;
   } else if (stellar.status !== 'ok') {
     overallStatus = 'degraded';
     statusCode = 200; // Still return 200 since DB is up and cached data can be served
@@ -139,7 +147,10 @@ async function healthCheck(req, res) {
         status: retryQueueStatus,
         backend: retryBackend || 'not_started',
         redisConfigured,
+        redisStatus: redisStatus.status,
         ...(redisConfigured && { redisHost: process.env.REDIS_HOST }),
+        ...(redisStatus.reason && { error: redisStatus.reason }),
+        ...(redisStatus.lastUpdatedAt && { lastUpdatedAt: redisStatus.lastUpdatedAt }),
       },
       priceFeed: {
         available: priceFeedStatus.length > 0,

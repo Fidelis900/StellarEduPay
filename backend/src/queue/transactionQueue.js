@@ -23,42 +23,36 @@
  */
 
 const { Queue, Worker } = require('bullmq');
-const Redis = require('ioredis');
 const PendingVerification = require('../models/pendingVerificationModel');
 const logger = require('../utils/logger');
 const { resolveCorrelationId } = require('../utils/correlationId');
 
 const QUEUE_NAME = 'transaction-processing';
 
-const redisConfig = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT, 10) || 6379,
-  password: process.env.REDIS_PASSWORD || undefined,
-  maxRetriesPerRequest: null, // required by BullMQ
-  // Do not crash the process on Redis errors — we have MongoDB as fallback
-  lazyConnect: true,
-  enableOfflineQueue: false,
-};
-
-// Shared Redis connection for the queue
-const connection = new Redis(redisConfig);
-connection.on('error', (err) =>
-  logger.error('[TransactionQueue] Redis error', { error: err.message })
-);
-
+const connection = getRedisClient();
 let transactionQueue = null;
-try {
-  transactionQueue = new Queue(QUEUE_NAME, {
-    connection,
-    defaultJobOptions: {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
-      removeOnComplete: { age: 3600, count: 500 },
-      removeOnFail: false,
-    },
-  });
-} catch (err) {
-  logger.error('[TransactionQueue] Failed to create BullMQ queue', { error: err.message });
+
+if (!connection) {
+  logger.warn('[TransactionQueue] Redis not configured or unavailable — using MongoDB fallback only');
+} else {
+  connection.on('error', (err) =>
+    logger.warn('[TransactionQueue] Redis error', { error: err.message })
+  );
+
+  try {
+    transactionQueue = new Queue(QUEUE_NAME, {
+      connection,
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { age: 3600, count: 500 },
+        removeOnFail: false,
+      },
+    });
+  } catch (err) {
+    logger.error('[TransactionQueue] Failed to create BullMQ queue', { error: err.message });
+    transactionQueue = null;
+  }
 }
 
 // ── MongoDB durability helpers ────────────────────────────────────────────────
@@ -243,8 +237,14 @@ async function getJobStatus(txHash) {
  * @param {Function} processor  async (job) => result
  */
 function startTransactionWorker(processor) {
+  const connection = getRedisClient();
+  if (!connection) {
+    logger.warn('[TransactionQueue] Redis unavailable — transaction worker not started');
+    return null;
+  }
+
   const worker = new Worker(QUEUE_NAME, processor, {
-    connection: new Redis(redisConfig),
+    connection,
     concurrency: parseInt(process.env.TX_QUEUE_CONCURRENCY, 10) || 5,
   });
 
